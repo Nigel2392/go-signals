@@ -46,5 +46,9 @@ for err := range errChan {
 		fmt.Printf("Received error: %s\n", err.Error())
 	}
 }
+```
 
+## Create a new signal pool
+```go
+var newSignalPool = signals.NewPool()
 ```
