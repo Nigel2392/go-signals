@@ -2,13 +2,16 @@ package signals_test
 
 import (
 	"errors"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/Nigel2392/go-signals"
 )
 
 func TestSignals(t *testing.T) {
-	var signal = signals.Get("mysignal")
+	var signalID = strconv.Itoa(int(time.Now().UnixNano()))
+	var signal = signals.Get(signalID)
 
 	var messages = make([]string, 0)
 
@@ -32,7 +35,7 @@ func TestSignals(t *testing.T) {
 		t.Errorf("Expected error, got nil")
 	}
 
-	newSignal := signals.Get("mysignal")
+	newSignal := signals.Get(signalID)
 	signal.Connect(receiver)
 	err = newSignal.Send("This is a signal message!")
 	if err != nil {
@@ -45,7 +48,7 @@ func TestSignals(t *testing.T) {
 }
 
 func TestMultiple(t *testing.T) {
-	var signal = signals.Get("mysignal")
+	var signal = signals.Get(strconv.Itoa(int(time.Now().UnixNano())))
 	var messages = make([]string, 0)
 	var receiver1 = signals.NewRecv(func(signal signals.Signal, value ...any) error {
 		t.Log("Signal 1 fired.")
@@ -93,7 +96,7 @@ func connectSignal(amount int, signal signals.Signal, receiverFunc func(signal s
 }
 
 func BenchmarkSignals(b *testing.B) {
-	var signal = signals.Get("mysignal")
+	var signal = signals.Get(strconv.Itoa(int(time.Now().UnixNano())))
 
 	connectSignal(32000, signal, func(signal signals.Signal, value ...any) error { return nil })
 
@@ -105,7 +108,7 @@ func BenchmarkSignals(b *testing.B) {
 func TestMany(t *testing.T) {
 	const amountCount = 32000
 
-	var signal = signals.Get("mysignal")
+	var signal = signals.Get(strconv.Itoa(int(time.Now().UnixNano())))
 
 	connectSignal(amountCount, signal, func(signal signals.Signal, value ...any) error { return nil })
 
@@ -115,20 +118,45 @@ func TestMany(t *testing.T) {
 }
 
 func TestSendAsync(t *testing.T) {
-	var signal = signals.Get("mysignal")
-	var totalReceivers = 3200000
+	var signal = signals.Get(strconv.Itoa(int(time.Now().UnixNano())))
+	var totalReceivers = 32000000
 
 	connectSignal(totalReceivers, signal, func(signal signals.Signal, value ...any) error { return errors.New(value[0].(string)) })
 
-	var errChan = signal.SendAsync("This is a signal message!")
-	var errors int = 0
+	signal.SendAsync("This is a signal message!")
+	var errChan chan error = signal.SendAsync("This is a signal message!")
+	var errs []error = make([]error, 0)
 	for err := range errChan {
 		if err != nil {
-			// t.Logf("Received error: %s", err.Error())
-			errors++
+			errs = append(errs, err)
 		}
 	}
-	if errors != totalReceivers {
-		t.Errorf("Expected %d errors, got %d", totalReceivers, len(errChan))
+
+	if len(errs) != totalReceivers {
+		t.Errorf("Expected %d errors, got %d", totalReceivers, len(errs))
+	} else {
+		t.Logf("Received %d errors", len(errs))
+	}
+}
+
+func TestManyRecv(t *testing.T) {
+	var signal = signals.Get(strconv.Itoa(int(time.Now().UnixNano())))
+	var totalReceivers = 32000000
+	connectSignal(totalReceivers, signal, func(signal signals.Signal, value ...any) error { return errors.New(value[0].(string)) })
+
+	var err = signal.Send("This is a signal message!")
+
+	if err != nil {
+		if e, ok := signals.SignalError(err); ok {
+			if e.Len() != totalReceivers {
+				t.Errorf("Expected %d errors, got %d", totalReceivers, e.Len())
+			} else {
+				t.Logf("Received %d errors", e.Len())
+			}
+		} else {
+			t.Errorf("Expected a signal error, got %s", e.Error())
+		}
+	} else {
+		t.Errorf("Expected a signal error, got nil")
 	}
 }

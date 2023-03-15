@@ -6,13 +6,6 @@ import (
 	"sync"
 )
 
-// Error type for signals.
-type e string
-
-func (e e) Error() string {
-	return string(e)
-}
-
 // Signal interface.
 //
 // Used for sending messages to receivers.
@@ -65,7 +58,7 @@ func (s *signal) Send(value ...any) error {
 	var err error
 	var errs []error = make([]error, 0)
 	for _, receiver := range s.receivers {
-		err = receiver.Receive(s, value)
+		err = receiver.Receive(s, value...)
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -73,8 +66,9 @@ func (s *signal) Send(value ...any) error {
 
 	// Return an error if any of the receivers returned an error.
 	if len(errs) > 0 {
-		return fmt.Errorf("error sending signal to %d receivers", len(errs))
+		return e(fmt.Sprintf("error sending signal to %d receivers", len(errs)), errs...)
 	}
+
 	return nil
 }
 
@@ -106,7 +100,7 @@ func (s *signal) SendAsync(value ...any) chan error {
 				defer wg.Done()
 				s.mu.Lock()
 				defer s.mu.Unlock()
-				var err error = receiver.Receive(s, value)
+				var err error = receiver.Receive(s, value...)
 				errChan <- err
 			}(receiver, &wg)
 			// Yield the goroutine.
