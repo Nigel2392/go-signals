@@ -9,15 +9,17 @@ import (
 	"github.com/Nigel2392/go-signals"
 )
 
+var pool = signals.NewPool[string]()
+
 func TestSignals(t *testing.T) {
 	var signalID = strconv.Itoa(int(time.Now().UnixNano()))
-	var signal = signals.Get(signalID)
+	var signal = pool.Get(signalID)
 
 	var messages = make([]string, 0)
 
-	var receiver = signals.NewRecv(func(signal signals.Signal, value ...any) error {
+	var receiver = signals.NewRecv(func(signal signals.Signal[string], value ...string) error {
 		t.Logf("Received %v from %s", value, signal.Name())
-		messages = append(messages, value[0].(string))
+		messages = append(messages, value[0])
 		return nil
 	})
 
@@ -48,21 +50,21 @@ func TestSignals(t *testing.T) {
 }
 
 func TestMultiple(t *testing.T) {
-	var signal = signals.Get(strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
 	var messages = make([]string, 0)
-	var receiver1 = signals.NewRecv(func(signal signals.Signal, value ...any) error {
+	var receiver1 = signals.NewRecv(func(signal signals.Signal[string], value ...string) error {
 		t.Log("Signal 1 fired.")
-		messages = append(messages, value[0].(string))
+		messages = append(messages, value[0])
 		return nil
 	})
-	var receiver2 = signals.NewRecv(func(signal signals.Signal, value ...any) error {
+	var receiver2 = signals.NewRecv(func(signal signals.Signal[string], value ...string) error {
 		t.Log("Signal 2 fired.")
-		messages = append(messages, value[0].(string))
+		messages = append(messages, value[0])
 		return nil
 	})
-	var receiver3 = signals.NewRecv(func(signal signals.Signal, value ...any) error {
+	var receiver3 = signals.NewRecv(func(signal signals.Signal[string], value ...string) error {
 		t.Log("Signal 3 fired.")
-		messages = append(messages, value[0].(string))
+		messages = append(messages, value[0])
 		return nil
 	})
 
@@ -88,7 +90,7 @@ func TestMultiple(t *testing.T) {
 
 }
 
-func connectSignal(amount int, signal signals.Signal, receiverFunc func(signal signals.Signal, value ...any) error) {
+func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(signal signals.Signal[T], value ...T) error) {
 	for i := 0; i < amount; i++ {
 		var receiver = signals.NewRecv(receiverFunc)
 		signal.Connect(receiver)
@@ -96,9 +98,9 @@ func connectSignal(amount int, signal signals.Signal, receiverFunc func(signal s
 }
 
 func BenchmarkSignals(b *testing.B) {
-	var signal = signals.Get(strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
 
-	connectSignal(32000, signal, func(signal signals.Signal, value ...any) error { return nil })
+	connectSignal(32000, signal, func(signal signals.Signal[string], value ...string) error { return nil })
 
 	for i := 0; i < b.N; i++ {
 		signal.Send("This is a signal message!")
@@ -108,9 +110,9 @@ func BenchmarkSignals(b *testing.B) {
 func TestMany(t *testing.T) {
 	const amountCount = 32000
 
-	var signal = signals.Get(strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
 
-	connectSignal(amountCount, signal, func(signal signals.Signal, value ...any) error { return nil })
+	connectSignal(amountCount, signal, func(signal signals.Signal[string], value ...string) error { return nil })
 
 	for i := 0; i < amountCount; i++ {
 		signal.Send("This is a signal message!")
@@ -118,10 +120,10 @@ func TestMany(t *testing.T) {
 }
 
 func TestSendAsync(t *testing.T) {
-	var signal = signals.Get(strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
 	var totalReceivers = 32000000
 
-	connectSignal(totalReceivers, signal, func(signal signals.Signal, value ...any) error { return errors.New(value[0].(string)) })
+	connectSignal(totalReceivers, signal, func(signal signals.Signal[string], value ...string) error { return errors.New(value[0]) })
 
 	signal.SendAsync("This is a signal message!")
 	var errChan chan error = signal.SendAsync("This is a signal message!")
@@ -140,9 +142,9 @@ func TestSendAsync(t *testing.T) {
 }
 
 func TestManyRecv(t *testing.T) {
-	var signal = signals.Get(strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
 	var totalReceivers = 32000000
-	connectSignal(totalReceivers, signal, func(signal signals.Signal, value ...any) error { return errors.New(value[0].(string)) })
+	connectSignal(totalReceivers, signal, func(signal signals.Signal[string], value ...string) error { return errors.New(value[0]) })
 
 	var err = signal.Send("This is a signal message!")
 

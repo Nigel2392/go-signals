@@ -11,6 +11,7 @@ go get github.com/Nigel2392/go-signals
 ## Synchronously sending signals
 ```go
 // Create a new signal in the global pool,
+// Signals from the global pool are of type interface{}.
 // if it was already created, we will fetch the old one
 // from the pool.
 var signal = signals.Get("mysignal")
@@ -18,7 +19,7 @@ var signal = signals.Get("mysignal")
 var messages = make([]string, 0)
 
 // Initialize a receiver
-var receiver = signals.NewRecv(func(signal signals.Signal, value ...any) error {
+var receiver = signals.NewRecv(func(signal signals.Signal[any], value ...any) error {
 	t.Logf("Received %v from %s", value, signal.Name())
 	messages = append(messages, value[0].(string))
 	return nil
@@ -50,5 +51,6 @@ for err := range errChan {
 
 ## Create a new signal pool
 ```go
-var newSignalPool = signals.NewPool()
+// Create a new signal pool of type string
+var newSignalPool = signals.NewPool[string]()
 ```

@@ -9,17 +9,19 @@ import (
 // Signal interface.
 //
 // Used for sending messages to receivers.
-type Signal interface {
+type Signal[T any] interface {
 	// Return the name of the signal.
 	Name() string
 	// Send a message across the signal's receivers.
-	Send(...any) error
+	Send(...T) error
 	// Send a message across the signal's receivers asynchronously.
-	SendAsync(...any) chan error
+	SendAsync(...T) chan error
 	// Connect a list of receivers to the signal.
-	Connect(...Receiver) error
+	Connect(...Receiver[T]) error
 	// Disconnect a list of receivers from a signal.
-	Disconnect(...Receiver)
+	Disconnect(...Receiver[T])
+	// Listen for a signal.
+	Listen(func(Signal[T], ...T) error) (Receiver[T], error)
 	// Clear all receivers for the signal.
 	Clear()
 }
@@ -27,14 +29,14 @@ type Signal interface {
 // Underlying signal struct for the Signal interface.
 //
 // This will be used to send among receivers.
-type signal struct {
-	name      string      // Name of the signal.
-	receivers []Receiver  // List of receivers.
-	mu        *sync.Mutex // Mutex for locking the signal.
+type signal[T any] struct {
+	name      string        // Name of the signal.
+	receivers []Receiver[T] // List of receivers.
+	mu        *sync.Mutex   // Mutex for locking the signal.
 }
 
 // Return the name of the signal.
-func (s *signal) Name() string {
+func (s *signal[T]) Name() string {
 	return s.name
 }
 
@@ -43,7 +45,7 @@ func (s *signal) Name() string {
 // Will error if there are no receivers.
 //
 // Returns an error, if any of the receivers return an error.
-func (s *signal) Send(value ...any) error {
+func (s *signal[T]) Send(value ...T) error {
 	// Check if there are any receivers.
 	if len(s.receivers) == 0 {
 		return e("no receivers")
@@ -83,7 +85,7 @@ func (s *signal) Send(value ...any) error {
 // This function also will not check if there are any receivers.
 //
 // Returns a channel which will contain all errors from the receivers.
-func (s *signal) SendAsync(value ...any) chan error {
+func (s *signal[T]) SendAsync(value ...T) chan error {
 	// Lock the signal so that we can't add
 	// or remove receivers while we're sending.
 
@@ -96,7 +98,7 @@ func (s *signal) SendAsync(value ...any) chan error {
 		wg.Add(len(s.receivers))
 		for _, receiver := range s.receivers {
 			// Create a new goroutine for each receiver.
-			go func(receiver Receiver, wg *sync.WaitGroup) {
+			go func(receiver Receiver[T], wg *sync.WaitGroup) {
 				defer wg.Done()
 				s.mu.Lock()
 				defer s.mu.Unlock()
@@ -114,7 +116,7 @@ func (s *signal) SendAsync(value ...any) chan error {
 
 // Connect a receiver to the signal.
 // This will call the receiver's Signal, setting the receiver's signal to this signal.
-func (s *signal) Connect(receivers ...Receiver) error {
+func (s *signal[T]) Connect(receivers ...Receiver[T]) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, receiver := range receivers {
@@ -125,7 +127,7 @@ func (s *signal) Connect(receivers ...Receiver) error {
 }
 
 // Disconnect a receiver from the signal.
-func (s *signal) Disconnect(other ...Receiver) {
+func (s *signal[T]) Disconnect(other ...Receiver[T]) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -150,7 +152,7 @@ func (s *signal) Disconnect(other ...Receiver) {
 
 // Clear the signal's receivers.
 // This will disconnect all receivers from the signal.
-func (s *signal) Clear() {
+func (s *signal[T]) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -158,20 +160,14 @@ func (s *signal) Clear() {
 		receiver.Disconnect()
 	}
 
-	s.receivers = make([]Receiver, 0)
+	s.receivers = make([]Receiver[T], 0)
 }
 
-// Clear the signal's receivers.
-// This will DEALLOCATE the signal's receivers.
-// Please use this with caution!
-func (s *signal) ClearUnsafe() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for _, receiver := range s.receivers {
-		receiver.Signal(nil)
-	}
-
-	s.receivers = make([]Receiver, 0)
-	runtime.GC()
+// Listen for a signal.
+//
+// This will create a new receiver, and connect it to the signal.
+func (s *signal[T]) Listen(fn func(Signal[T], ...T) error) (Receiver[T], error) {
+	var receiver Receiver[T] = NewRecv(fn)
+	var err = s.Connect(receiver)
+	return receiver, err
 }
