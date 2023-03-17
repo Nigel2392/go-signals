@@ -37,7 +37,7 @@ func TestSignals(t *testing.T) {
 		t.Errorf("Expected error, got nil")
 	}
 
-	newSignal := signals.Get(signalID)
+	newSignal := pool.Get(signalID)
 	signal.Connect(receiver)
 	err = newSignal.Send("This is a signal message!")
 	if err != nil {
