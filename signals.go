@@ -95,15 +95,16 @@ func (s *signal[T]) SendAsync(value ...T) chan error {
 		var wg sync.WaitGroup
 		defer wg.Wait()
 		defer close(errChan)
+
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
 		wg.Add(len(s.receivers))
 		for _, receiver := range s.receivers {
 			// Create a new goroutine for each receiver.
 			go func(receiver Receiver[T], wg *sync.WaitGroup) {
 				defer wg.Done()
-				s.mu.Lock()
-				defer s.mu.Unlock()
-				var err error = receiver.Receive(s, value...)
-				errChan <- err
+				errChan <- receiver.Receive(s, value...)
 			}(receiver, &wg)
 			// Yield the goroutine.
 			runtime.Gosched()
