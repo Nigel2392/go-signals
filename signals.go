@@ -35,6 +35,15 @@ type signal[T any] struct {
 	mu        *sync.Mutex   // Mutex for locking the signal.
 }
 
+// Create a new signal.
+func New[T any](name string) Signal[T] {
+	return &signal[T]{
+		name:      name,
+		receivers: make([]Receiver[T], 0),
+		mu:        &sync.Mutex{},
+	}
+}
+
 // Return the name of the signal.
 func (s *signal[T]) Name() string {
 	return s.name
