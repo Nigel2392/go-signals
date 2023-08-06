@@ -57,7 +57,7 @@ func (s *signal[T]) Name() string {
 func (s *signal[T]) Send(value T) error {
 	// Check if there are any receivers.
 	if len(s.receivers) == 0 {
-		return e("no receivers")
+		return nil
 	}
 
 	// Lock the signal so that we can't add
@@ -97,6 +97,10 @@ func (s *signal[T]) Send(value T) error {
 func (s *signal[T]) SendAsync(value T) chan error {
 	// Lock the signal so that we can't add
 	// or remove receivers while we're sending.
+
+	if len(s.receivers) == 0 {
+		return nil
+	}
 
 	// Send the signal to each receiver.
 	var errChan chan error = make(chan error, len(s.receivers))
