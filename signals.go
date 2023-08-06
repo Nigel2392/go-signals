@@ -13,15 +13,15 @@ type Signal[T any] interface {
 	// Return the name of the signal.
 	Name() string
 	// Send a message across the signal's receivers.
-	Send(...T) error
+	Send(T) error
 	// Send a message across the signal's receivers asynchronously.
-	SendAsync(...T) chan error
+	SendAsync(T) chan error
 	// Connect a list of receivers to the signal.
 	Connect(...Receiver[T]) error
 	// Disconnect a list of receivers from a signal.
 	Disconnect(...Receiver[T])
 	// Listen for a signal.
-	Listen(func(Signal[T], ...T) error) (Receiver[T], error)
+	Listen(func(Signal[T], T) error) (Receiver[T], error)
 	// Clear all receivers for the signal.
 	Clear()
 }
@@ -54,7 +54,7 @@ func (s *signal[T]) Name() string {
 // Will error if there are no receivers.
 //
 // Returns an error, if any of the receivers return an error.
-func (s *signal[T]) Send(value ...T) error {
+func (s *signal[T]) Send(value T) error {
 	// Check if there are any receivers.
 	if len(s.receivers) == 0 {
 		return e("no receivers")
@@ -69,7 +69,7 @@ func (s *signal[T]) Send(value ...T) error {
 	var err error
 	var errs []error = make([]error, 0)
 	for _, receiver := range s.receivers {
-		err = receiver.Receive(s, value...)
+		err = receiver.Receive(s, value)
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -94,7 +94,7 @@ func (s *signal[T]) Send(value ...T) error {
 // This function also will not check if there are any receivers.
 //
 // Returns a channel which will contain all errors from the receivers.
-func (s *signal[T]) SendAsync(value ...T) chan error {
+func (s *signal[T]) SendAsync(value T) chan error {
 	// Lock the signal so that we can't add
 	// or remove receivers while we're sending.
 
@@ -113,7 +113,7 @@ func (s *signal[T]) SendAsync(value ...T) chan error {
 			// Create a new goroutine for each receiver.
 			go func(receiver Receiver[T], wg *sync.WaitGroup) {
 				defer wg.Done()
-				errChan <- receiver.Receive(s, value...)
+				errChan <- receiver.Receive(s, value)
 			}(receiver, &wg)
 			// Yield the goroutine.
 			runtime.Gosched()
@@ -176,7 +176,7 @@ func (s *signal[T]) Clear() {
 // Listen for a signal.
 //
 // This will create a new receiver, and connect it to the signal.
-func (s *signal[T]) Listen(fn func(Signal[T], ...T) error) (Receiver[T], error) {
+func (s *signal[T]) Listen(fn func(Signal[T], T) error) (Receiver[T], error) {
 	var receiver Receiver[T] = NewRecv(fn)
 	var err = s.Connect(receiver)
 	return receiver, err

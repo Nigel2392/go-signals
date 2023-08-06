@@ -59,21 +59,21 @@ func (m *Pool[T]) Range(f func(value Signal[T]) bool) {
 
 // Send a signal inside of the signal pool, from the signal with the given name
 // to all receivers that are connected to the signal.
-func (m *Pool[T]) Send(name string, value ...T) error {
+func (m *Pool[T]) Send(name string, value T) error {
 	var signal, ok = m.load(name)
 	if !ok {
 		return e("signal not found")
 	}
-	return signal.Send(value...)
+	return signal.Send(value)
 }
 
 // Send a signal globally, across all signals present in the pool.
 //
 // This will send a signal to ALL receivers inside of this pool.
-func (m *Pool[T]) SendGlobal(value ...T) error {
+func (m *Pool[T]) SendGlobal(value T) error {
 	var err error
 	m.Range(func(signal Signal[T]) bool {
-		err = signal.Send(value...)
+		err = signal.Send(value)
 		return err == nil
 	})
 	return err
@@ -82,13 +82,13 @@ func (m *Pool[T]) SendGlobal(value ...T) error {
 // Create or send a signal inside of the signal pool.
 //
 // This will send a signal to the receivers, if the signal already exists.
-func (m *Pool[T]) CreateOrSend(name string, value ...T) error {
+func (m *Pool[T]) CreateOrSend(name string, value T) error {
 	var s, ok = m.load(name)
 	if !ok {
 		s = &signal[T]{name: name, receivers: make([]Receiver[T], 0), mu: &sync.Mutex{}}
 		m.store(name, s)
 	}
-	return s.Send(value...)
+	return s.Send(value)
 }
 
 // Register a receiver to a signal.
@@ -98,7 +98,7 @@ func (m *Pool[T]) CreateOrSend(name string, value ...T) error {
 // If the signal does not exist, it will be created.
 //
 // This is a shorthand.
-func (m *Pool[T]) Listen(name string, r func(Signal[T], ...T) error) (Receiver[T], error) {
+func (m *Pool[T]) Listen(name string, r func(Signal[T], T) error) (Receiver[T], error) {
 	return m.Get(name).Listen(r)
 }
 

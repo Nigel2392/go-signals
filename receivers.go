@@ -10,7 +10,7 @@ import (
 // The receiver will be called when the signal is sent.
 type Receiver[T any] interface {
 	// Receives the signal and value from the signal.
-	Receive(Signal[T], ...T) error
+	Receive(Signal[T], T) error
 
 	// Disconnects the receiver from the signal.
 	Disconnect() error
@@ -25,18 +25,18 @@ type Receiver[T any] interface {
 // Underlying receiver struct
 type receiver[T any] struct {
 	signal Signal[T]
-	cb     func(Signal[T], ...T) error
+	cb     func(Signal[T], T) error
 	mu     sync.Mutex
 }
 
 // Initialize a new receiver
-func NewRecv[T any](cb func(Signal[T], ...T) error) *receiver[T] {
+func NewRecv[T any](cb func(Signal[T], T) error) *receiver[T] {
 	return &receiver[T]{cb: cb}
 }
 
 // Receives the signal and value from the signal.
-func (r *receiver[T]) Receive(s Signal[T], value ...T) error {
-	return r.cb(s, value...)
+func (r *receiver[T]) Receive(s Signal[T], value T) error {
+	return r.cb(s, value)
 }
 
 // Disconnects the receiver from the signal.

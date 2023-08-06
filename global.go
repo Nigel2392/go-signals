@@ -30,6 +30,6 @@ func Get(name string) Signal[any] {
 //	If the signal does not exist, it will be created.
 //
 //	This is a shorthand.
-func Listen(name string, r func(Signal[any], ...any) error) {
+func Listen(name string, r func(Signal[any], any) error) {
 	defaultSignalPool.Listen(name, r)
 }
