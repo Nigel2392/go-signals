@@ -26,3 +26,7 @@ func (e Error) Error() string {
 func (e Error) Len() int {
 	return len(e.Errors)
 }
+
+func (e Error) Unwrap() []error {
+	return e.Errors
+}
