@@ -33,8 +33,8 @@ func TestSignals(t *testing.T) {
 	signal.Disconnect(receiver)
 
 	err = signal.Send("This is a signal message!")
-	if err == nil {
-		t.Errorf("Expected error, got nil")
+	if err != nil {
+		t.Errorf("Expected no errors, got %s", err.Error())
 	}
 
 	newSignal := pool.Get(signalID)

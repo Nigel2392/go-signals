@@ -1,5 +1,7 @@
 package signals
 
+import "strings"
+
 func SignalError(e error) (Error, bool) {
 	switch e := e.(type) {
 	case Error:
@@ -20,7 +22,17 @@ type Error struct {
 }
 
 func (e Error) Error() string {
-	return e.Val
+	var b = new(strings.Builder)
+	b.WriteString(e.Val)
+	b.WriteString(" (")
+	for i, err := range e.Errors {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		b.WriteString(err.Error())
+	}
+	b.WriteString(")")
+	return b.String()
 }
 
 func (e Error) Len() int {
