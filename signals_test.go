@@ -161,3 +161,74 @@ func TestManyRecv(t *testing.T) {
 		t.Errorf("Expected a signal error, got nil")
 	}
 }
+
+func TestNestedSignals_SameSignal(t *testing.T) {
+	var signalID = strconv.Itoa(int(time.Now().UnixNano()))
+	var signal = pool.Get(signalID)
+
+	var callCount int
+	var maxCalls = 5
+
+	var receiver = signals.NewRecv(func(sig signals.Signal[string], value string) error {
+		callCount++
+		t.Logf("Call %d: received %s", callCount, value)
+
+		// Break condition to prevent infinite recursion / stack overflow
+		if callCount < maxCalls {
+			// Fire the exact same signal while currently inside its listener
+			return sig.Send("nested call")
+		}
+		return nil
+	})
+
+	signal.Connect(receiver)
+
+	// If the mutex is not released before iterating listeners, this will deadlock instantly.
+	var err = signal.Send("initial call")
+	if err != nil {
+		t.Errorf("Expected no errors during nested sends, got: %s", err.Error())
+	}
+
+	if callCount != maxCalls {
+		t.Errorf("Expected %d calls, got %d", maxCalls, callCount)
+	}
+}
+
+func TestNestedSignals_CrossTrigger(t *testing.T) {
+	// Simulating your exact ORM scenario
+	var preCreate = pool.Get("queries.model.pre_create_test")
+	var postCreate = pool.Get("queries.model.post_create_test")
+
+	var preCount, postCount int
+
+	var preReceiver = signals.NewRecv(func(sig signals.Signal[string], value string) error {
+		preCount++
+		t.Log("Pre-Create fired. Emitting Post-Create...")
+
+		// Emitting a different signal from within the listener
+		return postCreate.Send("triggered from pre-create")
+	})
+
+	var postReceiver = signals.NewRecv(func(sig signals.Signal[string], value string) error {
+		postCount++
+		t.Log("Post-Create fired.")
+		return nil
+	})
+
+	preCreate.Connect(preReceiver)
+	postCreate.Connect(postReceiver)
+
+	// Fire the first signal
+	var err = preCreate.Send("initial trigger")
+	if err != nil {
+		t.Fatalf("Failed to execute cross-trigger: %s", err.Error())
+	}
+
+	// Verify both fired exactly once
+	if preCount != 1 {
+		t.Errorf("Expected preCount to be 1, got %d", preCount)
+	}
+	if postCount != 1 {
+		t.Errorf("Expected postCount to be 1, got %d", postCount)
+	}
+}

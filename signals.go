@@ -3,6 +3,7 @@ package signals
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"sync"
 )
 
@@ -60,15 +61,16 @@ func (s *signal[T]) Send(value T) error {
 		return nil
 	}
 
-	// Lock the signal so that we can't add
-	// or remove receivers while we're sending.
+	// clone the receiver slice
+	// do not defer the unlock, as nested signals may be called
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	recvs := slices.Clone(s.receivers)
+	s.mu.Unlock()
 
 	// Send the signal to each receiver.
 	var err error
 	var errs []error = make([]error, 0)
-	for _, receiver := range s.receivers {
+	for _, receiver := range recvs {
 		err = receiver.Receive(s, value)
 		if err != nil {
 			errs = append(errs, err)
@@ -102,18 +104,19 @@ func (s *signal[T]) SendAsync(value T) chan error {
 		return nil
 	}
 
+	s.mu.Lock()
+	recvs := slices.Clone(s.receivers)
+	s.mu.Unlock()
+
 	// Send the signal to each receiver.
-	var errChan chan error = make(chan error, len(s.receivers))
+	var errChan chan error = make(chan error, len(recvs))
 	go func() {
 		var wg sync.WaitGroup
 		defer wg.Wait()
 		defer close(errChan)
 
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
-		wg.Add(len(s.receivers))
-		for _, receiver := range s.receivers {
+		wg.Add(len(recvs))
+		for _, receiver := range recvs {
 			// Create a new goroutine for each receiver.
 			go func(receiver Receiver[T], wg *sync.WaitGroup) {
 				defer wg.Done()

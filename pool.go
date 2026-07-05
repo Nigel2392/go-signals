@@ -79,6 +79,12 @@ func (m *Pool[T]) SendGlobal(value T) error {
 	return err
 }
 
+// Exists checks if a signal exists in the pool.
+func (m *Pool[T]) Exists(name string) bool {
+	_, ok := m.load(name)
+	return ok
+}
+
 // Create or send a signal inside of the signal pool.
 //
 // This will send a signal to the receivers, if the signal already exists.
