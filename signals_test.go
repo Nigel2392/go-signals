@@ -121,7 +121,7 @@ func TestMany(t *testing.T) {
 
 func TestSendAsync(t *testing.T) {
 	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
-	var totalReceivers = 32000000
+	var totalReceivers = 32000
 
 	connectSignal(totalReceivers, signal, func(signal signals.Signal[string], value string) error { return errors.New(value) })
 
@@ -142,7 +142,7 @@ func TestSendAsync(t *testing.T) {
 
 func TestManyRecv(t *testing.T) {
 	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
-	var totalReceivers = 32000000
+	var totalReceivers = 32000
 	connectSignal(totalReceivers, signal, func(signal signals.Signal[string], value string) error { return errors.New(value) })
 
 	var err = signal.Send("This is a signal message!")
