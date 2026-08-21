@@ -1,5 +1,7 @@
 package signals
 
+import "context"
+
 // Default signal pool
 //
 // This will be used to store, retrieve and delete signals.
@@ -12,8 +14,8 @@ var defaultSignalPool = NewPool[any]()
 // This will send the signal to all receivers that are connected to the signal.
 //
 // Returns an error, if any of the receivers return an error.
-func Send(name string, value any) error {
-	return defaultSignalPool.Send(name, value)
+func Send(ctx context.Context, name string, value any) error {
+	return defaultSignalPool.Send(ctx, name, value)
 }
 
 // Get a signal by name.
@@ -30,6 +32,6 @@ func Get(name string) Signal[any] {
 //	If the signal does not exist, it will be created.
 //
 //	This is a shorthand.
-func Listen(name string, r func(Signal[any], any) error) {
-	defaultSignalPool.Listen(name, r)
+func Listen(ctx context.Context, name string, r func(context.Context, Signal[any], any) error) {
+	defaultSignalPool.Listen(ctx, name, r)
 }

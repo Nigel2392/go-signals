@@ -1,7 +1,8 @@
 package signals
 
 import (
-	"sync"
+	"context"
+	"fmt"
 	"unsafe"
 )
 
@@ -10,58 +11,60 @@ import (
 // The receiver will be called when the signal is sent.
 type Receiver[T any] interface {
 	// Receives the signal and value from the signal.
-	Receive(Signal[T], T) error
+	Receive(context.Context, Signal[T], T) error
 
 	// Disconnects the receiver from the signal.
-	Disconnect() error
+	Disconnect(context.Context) error
 
 	// Sets the signal on the receiver instance for later use.
-	Signal(...Signal[T]) Signal[T]
+	Bind(context.Context, Signal[T]) error
+
+	// Retrieves the signal from the receiver instance
+	Signal() Signal[T]
 
 	// Return the unique ID of the receiver.
-	ID() uint64
+	ID() string
 }
 
 // Underlying receiver struct
 type receiver[T any] struct {
 	signal Signal[T]
-	cb     func(Signal[T], T) error
-	mu     sync.Mutex
+	cb     func(context.Context, Signal[T], T) error
 }
 
 // Initialize a new receiver
-func NewRecv[T any](cb func(Signal[T], T) error) *receiver[T] {
+func NewRecv[T any](cb func(context.Context, Signal[T], T) error) *receiver[T] {
 	return &receiver[T]{cb: cb}
 }
 
 // Receives the signal and value from the signal.
-func (r *receiver[T]) Receive(s Signal[T], value T) error {
-	return r.cb(s, value)
+func (r *receiver[T]) Receive(ctx context.Context, s Signal[T], value T) error {
+	return r.cb(ctx, s, value)
 }
 
 // Disconnects the receiver from the signal.
-func (r *receiver[T]) Disconnect() error {
+func (r *receiver[T]) Disconnect(ctx context.Context) error {
 	if r.signal == nil {
-		return e("receiver is not connected to a signal")
+		return Err("receiver is not connected to a signal")
 	}
-	r.signal.Disconnect(r)
 	r.signal = nil
 	return nil
 }
 
 // Sets the signal on the receiver instance for later use.
+func (r *receiver[T]) Bind(_ context.Context, signal Signal[T]) error {
+	r.signal = signal
+	return nil
+}
+
 // Returns the signal if there is one.
-// If the signal is already set, overwrite and return new value.
-func (r *receiver[T]) Signal(signal ...Signal[T]) Signal[T] {
-	if len(signal) > 0 {
-		r.signal = signal[0]
-	}
+func (r *receiver[T]) Signal() Signal[T] {
 	return r.signal
 }
 
 // Return the unique ID of the receiver.
 // This will be the memory address of the receiver.
-func (r *receiver[T]) ID() uint64 {
+func (r *receiver[T]) ID() string {
 	var addr = uintptr(unsafe.Pointer(r))
-	return uint64(addr)
+	return fmt.Sprint(uint64(addr))
 }

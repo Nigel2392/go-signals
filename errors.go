@@ -1,17 +1,38 @@
 package signals
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Nigel2392/errors"
+)
+
+const (
+	CodeNotSupported  errors.GoCode = "NotSupported"
+	CodeSignalError   errors.GoCode = "SignalError"
+	CodeReceiverError errors.GoCode = "ReceiverError"
+)
+
+var (
+	ErrSignal      = errors.New(CodeSignalError, "signal error")
+	ErrReceiver    = errors.New(CodeReceiverError, "receiver error")
+	ErrUnsupported = errors.New(CodeNotSupported, "operation not supported")
+)
 
 func SignalError(e error) (Error, bool) {
 	switch e := e.(type) {
 	case Error:
 		return e, true
 	default:
+		var t = new(Error)
+		if errors.As(e, t) {
+			return *t, true
+		}
+
 		return Error{Val: e.Error()}, false
 	}
 }
 
-func e(val string, errors ...error) error {
+func Err(val string, errors ...error) error {
 	return Error{Val: val, Errors: errors}
 }
 

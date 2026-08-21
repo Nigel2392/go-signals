@@ -1,6 +1,7 @@
 package signals_test
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/Nigel2392/go-signals"
 )
 
+var TOTAL_AMOUNT = 32000
 var pool = signals.NewPool[string]()
 
 func TestSignals(t *testing.T) {
@@ -17,29 +19,29 @@ func TestSignals(t *testing.T) {
 
 	var messages = make([]string, 0)
 
-	var receiver = signals.NewRecv(func(signal signals.Signal[string], value string) error {
+	var receiver = signals.NewRecv(func(ctx context.Context, signal signals.Signal[string], value string) error {
 		t.Logf("Received %v from %s", value, signal.Name())
 		messages = append(messages, value)
 		return nil
 	})
 
-	signal.Connect(receiver)
+	signal.Connect(t.Context(), receiver)
 
-	var err = signal.Send("This is a signal message!")
+	var err = signal.Send(t.Context(), "This is a signal message!")
 	if err != nil {
 		t.Errorf("Expected no errors, got %s", err.Error())
 	}
 
-	signal.Disconnect(receiver)
+	signal.Disconnect(t.Context(), receiver)
 
-	err = signal.Send("This is a signal message!")
+	err = signal.Send(t.Context(), "This is a signal message!")
 	if err != nil {
 		t.Errorf("Expected no errors, got %s", err.Error())
 	}
 
 	newSignal := pool.Get(signalID)
-	signal.Connect(receiver)
-	err = newSignal.Send("This is a signal message!")
+	signal.Connect(t.Context(), receiver)
+	err = newSignal.Send(t.Context(), "This is a signal message!")
 	if err != nil {
 		t.Errorf("Expected no errors, got %s", err.Error())
 	}
@@ -52,25 +54,25 @@ func TestSignals(t *testing.T) {
 func TestMultiple(t *testing.T) {
 	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
 	var messages = make([]string, 0)
-	var receiver1 = signals.NewRecv(func(signal signals.Signal[string], value string) error {
+	var receiver1 = signals.NewRecv(func(ctx context.Context, signal signals.Signal[string], value string) error {
 		t.Log("Signal 1 fired.")
 		messages = append(messages, value)
 		return nil
 	})
-	var receiver2 = signals.NewRecv(func(signal signals.Signal[string], value string) error {
+	var receiver2 = signals.NewRecv(func(ctx context.Context, signal signals.Signal[string], value string) error {
 		t.Log("Signal 2 fired.")
 		messages = append(messages, value)
 		return nil
 	})
-	var receiver3 = signals.NewRecv(func(signal signals.Signal[string], value string) error {
+	var receiver3 = signals.NewRecv(func(ctx context.Context, signal signals.Signal[string], value string) error {
 		t.Log("Signal 3 fired.")
 		messages = append(messages, value)
 		return nil
 	})
 
-	signal.Connect(receiver1, receiver2, receiver3)
+	signal.Connect(t.Context(), receiver1, receiver2, receiver3)
 
-	var err = signal.Send("This is a signal message!")
+	var err = signal.Send(t.Context(), "This is a signal message!")
 	if err != nil {
 		t.Errorf("Expected no errors, got %s", err.Error())
 	}
@@ -78,9 +80,9 @@ func TestMultiple(t *testing.T) {
 		t.Errorf("Expected 3 messages, got %d", len(messages))
 	}
 
-	signal.Disconnect(receiver1, receiver3)
+	signal.Disconnect(t.Context(), receiver1, receiver3)
 
-	err = signal.Send("This is a signal message!")
+	err = signal.Send(t.Context(), "This is a signal message!")
 	if err != nil {
 		t.Errorf("Expected no errors, got %s", err.Error())
 	}
@@ -90,42 +92,63 @@ func TestMultiple(t *testing.T) {
 
 }
 
-func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(signal signals.Signal[T], value T) error) {
+func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
 	for i := 0; i < amount; i++ {
 		var receiver = signals.NewRecv(receiverFunc)
-		signal.Connect(receiver)
+		signal.Connect(context.Background(), receiver)
 	}
 }
 
 func BenchmarkSignals(b *testing.B) {
 	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
 
-	connectSignal(32000, signal, func(signal signals.Signal[string], value string) error { return nil })
+	connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return nil })
 
 	for i := 0; i < b.N; i++ {
-		signal.Send("This is a signal message!")
+		signal.Send(b.Context(), "This is a signal message!")
 	}
 }
 
 func TestMany(t *testing.T) {
-	const amountCount = 32000
+	amountCount := TOTAL_AMOUNT
 
 	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
 
-	connectSignal(amountCount, signal, func(signal signals.Signal[string], value string) error { return nil })
+	connectSignal(amountCount, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return nil })
 
 	for i := 0; i < amountCount; i++ {
-		signal.Send("This is a signal message!")
+		signal.Send(t.Context(), "This is a signal message!")
 	}
 }
 
 func TestSendAsync(t *testing.T) {
 	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
-	var totalReceivers = 32000
+	var totalReceivers = TOTAL_AMOUNT
 
-	connectSignal(totalReceivers, signal, func(signal signals.Signal[string], value string) error { return errors.New(value) })
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
 
-	var errChan chan error = signal.SendAsync("This is a signal message!")
+	var errChan chan error = signal.SendAsync(t.Context(), "This is a signal message!")
+	var errs []error = make([]error, 0)
+	for err := range errChan {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) != totalReceivers {
+		t.Errorf("Expected %d errors, got %d", totalReceivers, len(errs))
+	} else {
+		t.Logf("Received %d errors", len(errs))
+	}
+}
+
+func TestPkgSendAsync(t *testing.T) {
+	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
+	var totalReceivers = TOTAL_AMOUNT
+
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
+
+	var errChan = signals.SignalSendAsync(t.Context(), signal, "This is a signal message!")
 	var errs []error = make([]error, 0)
 	for err := range errChan {
 		if err != nil {
@@ -142,10 +165,10 @@ func TestSendAsync(t *testing.T) {
 
 func TestManyRecv(t *testing.T) {
 	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
-	var totalReceivers = 32000
-	connectSignal(totalReceivers, signal, func(signal signals.Signal[string], value string) error { return errors.New(value) })
+	var totalReceivers = TOTAL_AMOUNT
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
 
-	var err = signal.Send("This is a signal message!")
+	var err = signal.Send(t.Context(), "This is a signal message!")
 
 	if err != nil {
 		if e, ok := signals.SignalError(err); ok {
@@ -169,22 +192,22 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 	var callCount int
 	var maxCalls = 5
 
-	var receiver = signals.NewRecv(func(sig signals.Signal[string], value string) error {
+	var receiver = signals.NewRecv(func(ctx context.Context, sig signals.Signal[string], value string) error {
 		callCount++
 		t.Logf("Call %d: received %s", callCount, value)
 
 		// Break condition to prevent infinite recursion / stack overflow
 		if callCount < maxCalls {
 			// Fire the exact same signal while currently inside its listener
-			return sig.Send("nested call")
+			return sig.Send(t.Context(), "nested call")
 		}
 		return nil
 	})
 
-	signal.Connect(receiver)
+	signal.Connect(t.Context(), receiver)
 
 	// If the mutex is not released before iterating listeners, this will deadlock instantly.
-	var err = signal.Send("initial call")
+	var err = signal.Send(t.Context(), "initial call")
 	if err != nil {
 		t.Errorf("Expected no errors during nested sends, got: %s", err.Error())
 	}
@@ -201,25 +224,25 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 
 	var preCount, postCount int
 
-	var preReceiver = signals.NewRecv(func(sig signals.Signal[string], value string) error {
+	var preReceiver = signals.NewRecv(func(ctx context.Context, sig signals.Signal[string], value string) error {
 		preCount++
 		t.Log("Pre-Create fired. Emitting Post-Create...")
 
 		// Emitting a different signal from within the listener
-		return postCreate.Send("triggered from pre-create")
+		return postCreate.Send(t.Context(), "triggered from pre-create")
 	})
 
-	var postReceiver = signals.NewRecv(func(sig signals.Signal[string], value string) error {
+	var postReceiver = signals.NewRecv(func(ctx context.Context, sig signals.Signal[string], value string) error {
 		postCount++
 		t.Log("Post-Create fired.")
 		return nil
 	})
 
-	preCreate.Connect(preReceiver)
-	postCreate.Connect(postReceiver)
+	preCreate.Connect(t.Context(), preReceiver)
+	postCreate.Connect(t.Context(), postReceiver)
 
 	// Fire the first signal
-	var err = preCreate.Send("initial trigger")
+	var err = preCreate.Send(t.Context(), "initial trigger")
 	if err != nil {
 		t.Fatalf("Failed to execute cross-trigger: %s", err.Error())
 	}

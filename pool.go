@@ -1,8 +1,14 @@
 package signals
 
 import (
+	"context"
 	"sync"
 )
+
+type SignalPool[T any] interface {
+	NewSignal(ctx context.Context, name string) Signal[T]
+	Send(ctx context.Context, name string, value T) error
+}
 
 // Pool of signals.
 //
@@ -59,21 +65,21 @@ func (m *Pool[T]) Range(f func(value Signal[T]) bool) {
 
 // Send a signal inside of the signal pool, from the signal with the given name
 // to all receivers that are connected to the signal.
-func (m *Pool[T]) Send(name string, value T) error {
+func (m *Pool[T]) Send(ctx context.Context, name string, value T) error {
 	var signal, ok = m.load(name)
 	if !ok {
-		return e("signal not found")
+		return Err("signal not found")
 	}
-	return signal.Send(value)
+	return signal.Send(ctx, value)
 }
 
 // Send a signal globally, across all signals present in the pool.
 //
 // This will send a signal to ALL receivers inside of this pool.
-func (m *Pool[T]) SendGlobal(value T) error {
+func (m *Pool[T]) SendGlobal(ctx context.Context, value T) error {
 	var err error
 	m.Range(func(signal Signal[T]) bool {
-		err = signal.Send(value)
+		err = signal.Send(ctx, value)
 		return err == nil
 	})
 	return err
@@ -85,16 +91,27 @@ func (m *Pool[T]) Exists(name string) bool {
 	return ok
 }
 
+func (m *Pool[T]) NewSignal(ctx context.Context, name string) Signal[T] {
+	s, ok := m.load(name)
+	if ok {
+		return s
+	}
+
+	s = &signal[T]{name: name, receivers: make([]Receiver[T], 0), mu: &sync.Mutex{}}
+	m.store(name, s)
+	return s
+}
+
 // Create or send a signal inside of the signal pool.
 //
 // This will send a signal to the receivers, if the signal already exists.
-func (m *Pool[T]) CreateOrSend(name string, value T) error {
+func (m *Pool[T]) CreateOrSend(ctx context.Context, name string, value T) error {
 	var s, ok = m.load(name)
 	if !ok {
 		s = &signal[T]{name: name, receivers: make([]Receiver[T], 0), mu: &sync.Mutex{}}
 		m.store(name, s)
 	}
-	return s.Send(value)
+	return s.Send(ctx, value)
 }
 
 // Register a receiver to a signal.
@@ -104,18 +121,13 @@ func (m *Pool[T]) CreateOrSend(name string, value T) error {
 // If the signal does not exist, it will be created.
 //
 // This is a shorthand.
-func (m *Pool[T]) Listen(name string, r func(Signal[T], T) error) (Receiver[T], error) {
-	return m.Get(name).Listen(r)
+func (m *Pool[T]) Listen(ctx context.Context, name string, r func(context.Context, Signal[T], T) error) (Receiver[T], error) {
+	return m.Get(name).Listen(ctx, r)
 }
 
 // Get a signal by name.
 //
 // ** Will initialize a new signal if none exists. **
 func (m *Pool[T]) Get(name string) Signal[T] {
-	if signal, ok := m.load(name); ok {
-		return signal
-	}
-	var s = &signal[T]{name: name, receivers: make([]Receiver[T], 0), mu: &sync.Mutex{}}
-	m.store(name, s)
-	return s
+	return m.NewSignal(context.Background(), name)
 }
