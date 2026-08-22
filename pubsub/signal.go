@@ -17,7 +17,7 @@ func (s *signal[T]) Name() string {
 }
 
 func (s *signal[T]) Send(ctx context.Context, v T) error {
-	return s.pool.send(ctx, s.name, v)
+	return s.pool.Send(ctx, s.name, v)
 }
 
 func (s *signal[T]) SendAsync(ctx context.Context, v T) chan error {

@@ -3,8 +3,10 @@ package pubsub
 import (
 	"bytes"
 	"context"
+	"iter"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Nigel2392/go-signals"
@@ -20,9 +22,11 @@ type Pool[T any] struct {
 	signals     map[string]*signal[T]
 	subscribers map[string]*subscriber[T]
 	onErr       func(*Pool[T], error)
+	data        chan *Message
 
 	// managing the loop
 	tickTime time.Duration
+	closed   atomic.Bool
 	exit     chan struct{}
 }
 
@@ -54,6 +58,10 @@ func New[T any](pubsub PubSub, opts ...PoolOption[T]) *Pool[T] {
 		pool.onErr = defaultPoolError
 	}
 
+	if b, ok := pubsub.(PubSubBinder); ok {
+		b.BindChannel(pool)
+	}
+
 	return pool
 }
 
@@ -61,15 +69,38 @@ func (r *Pool[T]) Client() PubSub {
 	return r.client
 }
 
-func (r *Pool[T]) Send(ctx context.Context, name string, value T) error {
-	return r.NewSignal(ctx, name).Send(ctx, value)
+func (r *Pool[T]) SetChannel(ch chan *Message) {
+	r.data = ch
+}
+
+func (r *Pool[T]) Channel() chan *Message {
+	return r.data
+}
+
+func (r *Pool[T]) Send(ctx context.Context, topic string, value T) error {
+	data, err := r.encoder.EncodeBytes(value)
+	if err != nil {
+		return signals.ErrSignal.WithCause(err).Wrapf(
+			"could not encode %T to gob value", value,
+		)
+	}
+
+	err = r.client.Publish(ctx, topic, data)
+	if err != nil {
+		return signals.ErrSignal.WithCause(err).Wrapf(
+			"could not publish %T", value,
+		)
+	}
+	return nil
 }
 
 func (r *Pool[T]) Close() {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.exit != nil {
+		r.closed.Store(true)
 		close(r.exit)
+		r.exit = nil
 	}
 }
 
@@ -91,6 +122,86 @@ func (r *Pool[T]) NewSignal(_ context.Context, name string) signals.Signal[T] {
 	return sig
 }
 
+type Handler[T any] struct {
+	Value     T
+	Signal    signals.Signal[T]
+	Receivers []signals.Receiver[T]
+}
+
+func (r *Pool[T]) WaitLoop(ctx context.Context, work bool) iter.Seq2[*Handler[T], error] {
+	if r.data == nil {
+		panic("cannot call Pool.Handle without having called Pool.SetChannel")
+	}
+
+	return func(yield func(*Handler[T], error) bool) {
+		for payload := range r.data {
+
+			// retrieve subscriber object and signal
+			r.mu.Lock()
+			sub, ok := r.subscribers[payload.Channel]
+			if !ok {
+				r.mu.Unlock()
+				continue
+			}
+
+			var sig *signal[T]
+			if work {
+				sig, ok = r.signals[payload.Channel]
+				if !ok {
+					r.mu.Unlock()
+					continue
+				}
+			}
+
+			// rebuild subscriber cache if required
+			// allows for better concurrency
+			sub.checkDirty()
+			r.mu.Unlock()
+
+			// see if we should exit the loop
+			if r.closed.Load() {
+				return
+			}
+
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+
+			// decode value to send to receivers
+			val := new(T)
+			err := r.encoder.Decode(bytes.NewReader(payload.Data), val)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+
+			// process
+			var handler = &Handler[T]{
+				Value:     *val,
+				Signal:    sig,
+				Receivers: sub._cached,
+			}
+
+			if work {
+				var ret bool
+				r.processReceivers(ctx, sig, sub._cached, *val, func(err error) {
+					if !yield(handler, err) {
+						ret = true
+					}
+				})
+				if ret {
+					return
+				}
+			}
+
+			if !yield(handler, nil) {
+				return
+			}
+		}
+	}
+}
+
 func (r *Pool[T]) Loop(ctx context.Context) {
 	if r.exit != nil {
 		panic("Loop() can only be called when in the stopped state")
@@ -103,12 +214,14 @@ loop:
 	for {
 		select {
 		case <-tick.C:
-			if r.Work(ctx) {
+			if r.doWork(ctx) {
 				break loop
 			}
+
 		case <-ctx.Done():
 			r.callErr(ctx.Err())
 			break loop
+
 		case <-r.exit:
 			break loop
 		}
@@ -126,7 +239,7 @@ func (r *Pool[T]) callErr(err error) {
 	r.onErr((*Pool[T])(r), err)
 }
 
-func (r *Pool[T]) Work(ctx context.Context) (stop bool) {
+func (r *Pool[T]) doWork(ctx context.Context) (stop bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -145,54 +258,48 @@ func (r *Pool[T]) Work(ctx context.Context) (stop bool) {
 
 	drainLoop:
 		for {
-			select {
-			case <-ctx.Done():
-				r.callErr(ctx.Err())
+
+			// see if we should exit the loop
+			if r.closed.Load() {
 				return true
-			case <-r.exit:
-				return true
-			default:
 			}
 
+			if err := ctx.Err(); err != nil {
+				r.callErr(err)
+				return true
+			}
+
+			// try to receive the data
 			payload, hasMessage := sub.pubsub.TryReceive()
 			if !hasMessage {
 				break drainLoop // Queue empty, move to next subscriber
 			}
 
-			r.decodeAndSend(ctx, sig, sub, payload)
+			val := new(T)
+			err := r.encoder.Decode(bytes.NewReader(payload), val)
+			if err != nil {
+				r.callErr(err)
+				return
+			}
+
+			go r.processReceivers(ctx, sig, sub._cached, *val, r.callErr)
 		}
 	}
 
 	return false
 }
 
-func (r *Pool[T]) decodeAndSend(ctx context.Context, sig signals.Signal[T], sub *subscriber[T], payload []byte) {
-	val := new(T)
-	err := r.encoder.Decode(bytes.NewReader(payload), val)
-	if err != nil {
-		r.callErr(err)
-		return
-	}
-
-	go r.processReceivers(ctx, sig, sub._cached, *val)
-}
-
-func (r *Pool[T]) processReceivers(ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T) {
+func (r *Pool[T]) processReceivers(ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(error)) {
 receiverLoop:
 	for _, receiver := range receivers {
 
-		select {
-		case <-ctx.Done():
-			// do not call onErr, it will be handled by next loop iteration
+		if r.closed.Load() || ctx.Err() != nil {
 			return
-		case <-r.exit:
-			return
-		default:
 		}
 
 		err := receiver.Receive(ctx, sig, val)
 		if err != nil {
-			r.callErr(signals.ErrReceiver.WithCause(err).Wrapf(
+			callErr(signals.ErrReceiver.WithCause(err).Wrapf(
 				"receiver %q:", receiver.ID(),
 			))
 			continue receiverLoop
@@ -215,24 +322,6 @@ func (r *Pool[T]) newSub(signal string, createIfNotExists bool) *subscriber[T] {
 	}
 	r.subscribers[signal] = s
 	return s
-}
-
-func (r *Pool[T]) send(ctx context.Context, topic string, v T) error {
-	data, err := r.encoder.EncodeBytes(v)
-	if err != nil {
-		return signals.ErrSignal.WithCause(err).Wrapf(
-			"could not encode %T to gob value", v,
-		)
-	}
-
-	err = r.client.Publish(ctx, topic, data)
-	if err != nil {
-		return signals.ErrSignal.WithCause(err).Wrapf(
-			"could not publish %T", v,
-		)
-	}
-
-	return nil
 }
 
 func (r *Pool[T]) connect(ctx context.Context, signal string, recv signals.Receiver[T]) (err error) {

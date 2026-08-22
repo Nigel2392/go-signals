@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"errors"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -28,7 +29,6 @@ type MyType struct {
 	Name string
 }
 
-//
 //	func BenchmarkSignalsBlocking(b *testing.B) {
 //		b.StopTimer()
 //
@@ -65,50 +65,53 @@ type MyType struct {
 //			}
 //		}
 //	}
-//
-//	func BenchmarkSignalsTrying(b *testing.B) {
-//		b.StopTimer()
-//
-//		pool := pubsub.New[string](
-//			PubSub(),
-//			pubsub.PoolTickTime[string](time.Millisecond/5),
-//			// pubsub.PoolPrefersBlock,
-//			pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
-//				b.Log(string(debug.Stack()))
-//				b.Error(err)
-//			}),
-//		)
-//
-//		var incr = new(atomic.Int64)
-//		var wg = new(sync.WaitGroup)
-//		wg.Add(totalReceivers * b.N)
-//
-//		var signal = pool.NewSignal(b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
-//		connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
-//			wg.Done()
-//			return nil
-//		})
-//
-//		b.StartTimer()
-//
-//		for b.Loop() {
-//
-//			err := signal.Send(b.Context(), "This is a signal message!")
-//			if err != nil {
-//				b.Error(err)
-//			}
-//
-//			pool.Work(b.Context())
-//		}
-//
-//		wg.Wait()
-//
-//		if int(incr.Load()) != (totalReceivers * b.N) {
-//			b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
-//		}
-//
-//		pool.Close()
-//	}
+func BenchmarkSignals(b *testing.B) {
+	b.StopTimer()
+
+	pool := pubsub.New[string](
+		PubSub(false),
+		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+			b.Log(string(debug.Stack()))
+			b.Error(err)
+		}),
+	)
+
+	var incr = new(atomic.Int64)
+
+	var signal = pool.NewSignal(b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+		incr.Add(1)
+		return nil
+	})
+
+	b.StartTimer()
+
+	var wg sync.WaitGroup
+
+	go func() {
+		for range pool.WaitLoop(b.Context(), true) {
+			// b.Log(v, err)
+			wg.Done()
+		}
+	}()
+
+	for b.Loop() {
+		wg.Add(1)
+
+		err := signal.Send(b.Context(), "This is a signal message!")
+		if err != nil {
+			b.Error(err)
+		}
+
+		wg.Wait()
+	}
+
+	if int(incr.Load()) != (totalReceivers * b.N) {
+		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+	}
+
+	pool.Close()
+}
 
 func TestPoolSend(t *testing.T) {
 
@@ -118,7 +121,7 @@ func TestPoolSend(t *testing.T) {
 	)
 
 	pool := pubsub.New[MyType](
-		PubSub(),
+		PubSub(true),
 		pubsub.PoolTickTime[MyType](time.Millisecond*10),
 		// pubsub.PoolPrefersBlock,
 		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
@@ -220,7 +223,7 @@ func TestPoolContextErr(t *testing.T) {
 	)
 
 	pool := pubsub.New[MyType](
-		PubSub(),
+		PubSub(true),
 		pubsub.PoolTickTime[MyType](time.Millisecond*10),
 		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
 			errCh <- err
@@ -286,7 +289,7 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 	)
 
 	pool := pubsub.New[string](
-		PubSub(),
+		PubSub(true),
 		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
@@ -347,7 +350,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 	)
 
 	pool := pubsub.New(
-		PubSub(),
+		PubSub(true),
 		// pubsub.PoolTickTime[string](time.Millisecond/5),
 		pubsub.PoolTickTime[string](time.Millisecond/5),
 		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
@@ -410,7 +413,7 @@ func TestSendAsync(t *testing.T) {
 	)
 
 	pool := pubsub.New(
-		PubSub(),
+		PubSub(true),
 		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),

@@ -45,13 +45,20 @@ var (
 	_ Transmitter[any] = (*signal[any])(nil)
 )
 
+type cache[T any] struct {
+	dirty bool
+	data  []Receiver[T]
+}
+
 // Underlying signal struct for the Signal interface.
 //
 // This will be used to send among receivers.
 type signal[T any] struct {
 	name      string        // Name of the signal.
 	receivers []Receiver[T] // List of receivers.
-	mu        *sync.Mutex   // Mutex for locking the signal.
+	mu        *sync.RWMutex // Mutex for locking the signal.
+
+	cached cache[T]
 }
 
 // Create a new signal.
@@ -59,8 +66,26 @@ func New[T any](name string) Signal[T] {
 	return &signal[T]{
 		name:      name,
 		receivers: make([]Receiver[T], 0),
-		mu:        &sync.Mutex{},
+		mu:        &sync.RWMutex{},
 	}
+}
+
+func (s *signal[T]) getReceivers() []Receiver[T] {
+	s.mu.RLock()
+	isDirty := s.cached.dirty
+	cached := s.cached.data
+	s.mu.RUnlock()
+
+	if !isDirty {
+		return cached
+	}
+
+	s.mu.Lock()
+	s.cached.data = slices.Clone(s.receivers)
+	s.cached.dirty = false
+	s.mu.Unlock()
+
+	return s.cached.data
 }
 
 // Return the name of the signal.
@@ -74,20 +99,16 @@ func (s *signal[T]) Name() string {
 //
 // Returns an error, if any of the receivers return an error.
 func (s *signal[T]) Send(ctx context.Context, value T) error {
+	recvs := s.getReceivers()
+
 	// Check if there are any receivers.
-	if len(s.receivers) == 0 {
+	if len(recvs) == 0 {
 		return nil
 	}
 
-	// clone the receiver slice
-	// do not defer the unlock, as nested signals may be called
-	s.mu.Lock()
-	recvs := slices.Clone(s.receivers)
-	s.mu.Unlock()
-
 	// Send the signal to each receiver.
 	var err error
-	var errs []error = make([]error, 0)
+	var errs []error
 	for _, receiver := range recvs {
 		err = receiver.Receive(ctx, s, value)
 		if err != nil {
@@ -120,16 +141,12 @@ func (s *signal[T]) Send(ctx context.Context, value T) error {
 //
 // Returns a channel which will contain all errors from the receivers.
 func (s *signal[T]) SendAsync(ctx context.Context, value T) chan error {
-	// Lock the signal so that we can't add
-	// or remove receivers while we're sending.
+	recvs := s.getReceivers()
 
-	if len(s.receivers) == 0 {
+	// Check if there are any receivers.
+	if len(recvs) == 0 {
 		return nil
 	}
-
-	s.mu.Lock()
-	recvs := slices.Clone(s.receivers)
-	s.mu.Unlock()
 
 	// Send the signal to each receiver.
 	var errChan chan error = make(chan error, len(recvs))
@@ -171,6 +188,8 @@ func (s *signal[T]) Connect(ctx context.Context, receivers ...Receiver[T]) error
 		s.receivers = append(s.receivers, receiver)
 	}
 
+	s.cached.dirty = len(receivers) > 0
+
 	return nil
 }
 
@@ -208,6 +227,7 @@ func (s *signal[T]) Disconnect(ctx context.Context, other ...Receiver[T]) error 
 	}
 
 	s.receivers = newRecvs
+	s.cached.dirty = true
 
 	return nil
 }
@@ -228,6 +248,7 @@ func (s *signal[T]) Clear(ctx context.Context) error {
 	}
 
 	s.receivers = make([]Receiver[T], 0)
+	s.cached.dirty = true
 	return nil
 }
 
@@ -251,9 +272,12 @@ func (s *signal[T]) Transmit(ctx context.Context, value T, recv Receiver[T]) (er
 }
 
 func (s *signal[T]) Receivers(ctx context.Context) (int, iter.Seq[Receiver[T]]) {
-	s.mu.Lock()
-	recvs := slices.Clone(s.receivers)
-	s.mu.Unlock()
+	recvs := s.getReceivers()
+
+	// Check if there are any receivers.
+	if len(recvs) == 0 {
+		return 0, nil
+	}
 
 	return len(recvs), func(yield func(Receiver[T]) bool) {
 		for _, v := range recvs {

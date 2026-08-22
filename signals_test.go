@@ -104,7 +104,7 @@ func BenchmarkSignals(b *testing.B) {
 
 	connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return nil })
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		signal.Send(b.Context(), "This is a signal message!")
 	}
 }
