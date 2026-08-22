@@ -119,13 +119,18 @@ func TestPoolWaitLoop(t *testing.T) {
 
 	close(pool.Channel()) // Close channel to exit the WaitLoop iter
 
-	seq := pool.WaitLoop(context.Background(), true)
+	seq := pool.WaitLoop(context.Background())
 
 	count := 0
 	for handler, err := range seq {
 		if err != nil {
 			t.Errorf("WaitLoop error: %v", err)
 		}
+
+		if err := handler.Process(t.Context()); err != nil {
+			t.Errorf("Process error: %v", err)
+		}
+
 		if handler.Value != "loop message" {
 			t.Errorf("expected 'loop message', got '%v'", handler.Value)
 		}

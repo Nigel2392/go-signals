@@ -61,15 +61,12 @@ func (s *memoryPubSub) Publish(ctx context.Context, topic string, data []byte) e
 func (s *memoryPubSub) Subscribe(ctx context.Context, topic string) (pubsub.Subscriber, error) {
 	sub, ok := s.subscribers[topic]
 	if !ok {
-		ch := s.publish
-		if ch == nil {
-			ch = make(chan *pubsub.Message, 100)
-		}
-
 		sub = &memorySubscriber{
-			ch: ch,
+			ch: s.publish,
 		}
-
+		if sub.ch == nil {
+			sub.ch = make(chan *pubsub.Message, 100)
+		}
 		s.subscribers[topic] = sub
 	}
 	return sub, nil

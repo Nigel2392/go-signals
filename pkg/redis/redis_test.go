@@ -62,8 +62,13 @@ func BenchmarkSignals(b *testing.B) {
 	var wg sync.WaitGroup
 
 	go func() {
-		for range pool.WaitLoop(b.Context(), true) {
+		for h, err := range pool.WaitLoop(b.Context()) {
 			// b.Log(v, err)
+			if err != nil {
+				b.Error(err)
+				return
+			}
+			h.Process(b.Context())
 			wg.Done()
 		}
 	}()

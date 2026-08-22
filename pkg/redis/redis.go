@@ -49,6 +49,7 @@ func (s *redisPubSub) Subscribe(ctx context.Context, topic string) (pubsub.Subsc
 	}
 
 	// If we are in synchronous mode, forward messages to the centralized channel.
+	// synchronous means the pool loop is blocking, instead of in a goroutine.
 	if s.publish != nil {
 		go sub.forward(s.publish)
 	}
@@ -78,10 +79,8 @@ func (s *redisSubscriber) TryReceive() ([]byte, bool) {
 		if !ok || msg == nil {
 			return nil, false
 		}
-		// Convert strings to []byte right as we pull it off the wire
 		return []byte(msg.Payload), true
 	default:
-		// Queue is empty. Return instantly.
 		return nil, false
 	}
 }

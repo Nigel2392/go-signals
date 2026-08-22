@@ -18,19 +18,49 @@ import (
 var _ PubSubPool[any] = (*Pool[any])(nil)
 
 type Pool[T any] struct {
+	mu sync.RWMutex
+
+	// function to encode any values published.
+	//
+	// the default encoder is JSON.
 	encoder encoder.Encoder
 
-	mu          sync.RWMutex
-	client      PubSub
-	signals     map[string]*signal[T]
+	// the underlying interface that handles
+	// data transmission and retrieval
+	client PubSub
+
+	// map of topic to signal objects
+	signals map[string]*signal[T]
+
+	// map of topic to subscribers,
 	subscribers map[string]*subscriber[T]
-	onErr       func(*Pool[T], error)
-	data        chan *Message
+
+	// special function to handle any
+	// errors that occur during the async/loop process
+	onErr func(*Pool[T], error)
+
+	// channel for running in synchronous mode with WaitLoop
+	//
+	// if channel is non-nil, synchronous mode is active
+	//
+	// synchronous mode does **not** mean that the send/receive
+	// process is executed in a single goroutine.
+	//
+	// synchronous mode is a special mode that likely starts more goroutines (seen in pkg/redis/Subscribe)
+	// and calling [Pool.Loop] is deemed illegal, and causes a panic.
+	//
+	// on the upside, it does not rely on the ticker to retrieve values.
+	// this means that any values sent from a signal propagate as
+	// quickly as possible, only being limited by the scheduler.
+	data chan *Message
 
 	// managing the loop
-	tickTime time.Duration
-	closed   atomic.Bool
-	exit     chan struct{}
+	tickTime time.Duration // only used when in async/loop mode
+
+	// fast-path to check if currently in non-running state
+	// selecting on `exit` makes the `Pool` slower by *orders of magnitude.*
+	closed atomic.Bool
+	exit   chan struct{}
 }
 
 func defaultPoolError[T any](p *Pool[T], err error) {
@@ -94,6 +124,7 @@ func (r *Pool[T]) Send(ctx context.Context, topic string, value T) error {
 			"could not publish %T", value,
 		)
 	}
+
 	return nil
 }
 
@@ -129,9 +160,46 @@ type Handler[T any] struct {
 	Value     T
 	Signal    signals.Signal[T]
 	Receivers []signals.Receiver[T]
+
+	pool *Pool[T]
+	// process sync.Once
 }
 
-func (r *Pool[T]) WaitLoop(ctx context.Context, work bool) iter.Seq2[*Handler[T], error] {
+// Execute the receivers with the provided value
+//
+// Allows for changing the value before it is sent to the receivers, as well as providing
+// a custom [context.Context] with a possible deadline
+func (r *Handler[T]) Process(ctx context.Context) error {
+	var errs []error
+	// r.process.Do(func() {
+	r.pool.processReceivers(ctx, r.Signal, r.Receivers, r.Value, func(err error) {
+		errs = append(errs, err)
+	})
+	// })
+
+	if len(errs) > 0 {
+		return signals.Err("error while executing receivers", errs...)
+	}
+
+	return nil
+}
+
+// Execute the scheduling loop in a synchronous blocking mode.
+//
+// if Pool.data channel is non-nil, synchronous mode is active
+//
+// synchronous mode does **not** mean that the send/receive
+// process is executed in a single goroutine.
+//
+// synchronous mode is a special mode that likely starts more goroutines (seen in pkg/redis/Subscribe)
+// and calling [Pool.Loop] is deemed illegal and causes a panic.
+//
+// On the upside, it does not rely on the ticker to retrieve values.
+// this means that any values sent from a signal propagate as
+// quickly as possible, only being limited by the scheduler.
+//
+// Using this function is also great for benchmarking, as it isnt reliant on the timer.
+func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[*Handler[T], error] {
 	if r.data == nil {
 		panic("cannot call Pool.Handle without having called Pool.SetChannel")
 	}
@@ -147,13 +215,10 @@ func (r *Pool[T]) WaitLoop(ctx context.Context, work bool) iter.Seq2[*Handler[T]
 				continue
 			}
 
-			var sig *signal[T]
-			if work {
-				sig, ok = r.signals[payload.Channel]
-				if !ok {
-					r.mu.Unlock()
-					continue
-				}
+			sig, ok := r.signals[payload.Channel]
+			if !ok {
+				r.mu.Unlock()
+				continue
 			}
 
 			// rebuild subscriber cache if required
@@ -181,21 +246,10 @@ func (r *Pool[T]) WaitLoop(ctx context.Context, work bool) iter.Seq2[*Handler[T]
 
 			// process
 			var handler = &Handler[T]{
+				pool:      r,
 				Value:     *val,
 				Signal:    sig,
 				Receivers: sub._cached,
-			}
-
-			if work {
-				var ret bool
-				r.processReceivers(ctx, sig, sub._cached, *val, func(err error) {
-					if !yield(handler, err) {
-						ret = true
-					}
-				})
-				if ret {
-					return
-				}
 			}
 
 			if !yield(handler, nil) {
@@ -207,7 +261,11 @@ func (r *Pool[T]) WaitLoop(ctx context.Context, work bool) iter.Seq2[*Handler[T]
 
 func (r *Pool[T]) Loop(ctx context.Context) {
 	if r.exit != nil {
-		panic("Loop() can only be called when in the stopped state")
+		panic("Pool.Loop() can only be called when in the stopped state")
+	}
+
+	if r.data != nil {
+		panic("Pool.Loop() cannot be called when synchronous mode is active")
 	}
 
 	tick := time.NewTicker(r.tickTime)
