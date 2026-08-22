@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
@@ -343,6 +344,12 @@ func (r *Pool[T]) connect(ctx context.Context, signal string, recv signals.Recei
 }
 
 func (r *Pool[T]) clear(ctx context.Context, signal string) error {
+	if contextIs(ctx, "disconnect", signal, r) {
+		return nil
+	}
+
+	ctx = contextWith(ctx, "disconnect", signal, r)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -366,6 +373,12 @@ func (r *Pool[T]) clear(ctx context.Context, signal string) error {
 }
 
 func (r *Pool[T]) disconnect(ctx context.Context, sig *signal[T], recv signals.Receiver[T]) error {
+	if contextIs(ctx, "disconnect", sig.name, r) {
+		return nil
+	}
+
+	ctx = contextWith(ctx, "disconnect", sig.name, r)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -383,4 +396,30 @@ func (r *Pool[T]) disconnect(ctx context.Context, sig *signal[T], recv signals.R
 	}
 
 	return sub.check(sig.name)
+}
+
+type contextKey struct {
+	name    string
+	topic   string
+	pointer uintptr
+}
+
+func contextIs[T any](ctx context.Context, usage string, topic string, onceObj *T) bool {
+	key := contextKey{
+		name:    usage,
+		topic:   topic,
+		pointer: uintptr(unsafe.Pointer(onceObj)),
+	}
+
+	_, ok := ctx.Value(key).(struct{})
+	return ok
+}
+
+func contextWith[T any](ctx context.Context, usage string, topic string, onceObj *T) context.Context {
+	key := contextKey{
+		name:    usage,
+		topic:   topic,
+		pointer: uintptr(unsafe.Pointer(onceObj)),
+	}
+	return context.WithValue(ctx, key, struct{}{})
 }

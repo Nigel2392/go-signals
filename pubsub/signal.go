@@ -53,6 +53,10 @@ func (s *signal[T]) Clear(ctx context.Context) error {
 }
 
 func (s *signal[T]) Disconnect(ctx context.Context, recv ...signals.Receiver[T]) error {
+	if len(recv) == 0 {
+		return s.pool.clear(ctx, s.name)
+	}
+
 	for _, r := range recv {
 		err := s.pool.disconnect(ctx, s, r)
 		if err != nil {

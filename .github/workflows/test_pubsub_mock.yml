@@ -1,0 +1,32 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Test Signals Mock PubSub
+on:
+  push:
+    paths:
+      - 'pubsub/*.go'
+      - 'go.mod'
+      - 'go.work'
+      - 'go.mod'
+      - '.github/workflows/*'
+
+  pull_request:
+    paths:
+      - 'pubsub/*.go'
+      - 'go.mod'
+      - '.github/workflows/*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go 1.27
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.27'
+
+    - name: Test Signals Mock PubSub
+      run: go test -v ./pubsub/
