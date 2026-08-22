@@ -394,9 +394,9 @@ BenchmarkSignals-16        50912            117317 ns/op              10 B/op   
 
 The memory implementation of the `PubSub` interface should only be used for testing or development.
 
-This is not due to it having bugs, it is purely because the base go-signals package provides a very large performance benefit.
+This is not due to any known bugs or logic- issues, it is purely because **the base go-signals package provides a very large performance benefit**.
 
-Meaning: if you never expect to actually use a custom distributed backend, the performance penalty incurred by
+*Meaning:* if you never expect to actually use a custom distributed backend, the performance penalty incurred by
 many different select statements, channel interactions and serialization can be completely mitigated by using the base package.
 
 ```sh

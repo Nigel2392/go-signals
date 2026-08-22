@@ -20,10 +20,6 @@ on:
 
 jobs:
   build:
-    env:
-      # See contrib/admin/middleware.go for more information
-      GITHUB_ACTIONS: 1
-
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
