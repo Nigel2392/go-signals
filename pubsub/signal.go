@@ -1,10 +1,7 @@
-package redis
+package pubsub
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/gob"
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/google/uuid"
@@ -12,7 +9,7 @@ import (
 
 type signal[T any] struct {
 	name string
-	pool *redisPool[T]
+	pool *Pool[T]
 }
 
 func (s *signal[T]) Name() string {
@@ -20,29 +17,14 @@ func (s *signal[T]) Name() string {
 }
 
 func (s *signal[T]) Send(ctx context.Context, v T) error {
-	buf := new(bytes.Buffer)
-	enc := gob.NewEncoder(buf)
-	err := enc.Encode(v)
-	if err != nil {
-		return signals.ErrSignal.WithCause(err).Wrapf(
-			"could not encode %T to gob value", v,
-		)
-	}
-
-	err = s.pool.client.Publish(ctx, s.name, base64.StdEncoding.EncodeToString(buf.Bytes())).Err()
-	if err != nil {
-		return signals.ErrSignal.WithCause(err).Wrapf(
-			"could not publish %T", v,
-		)
-	}
-	return nil
+	return s.pool.send(ctx, s.name, v)
 }
 
 func (s *signal[T]) SendAsync(ctx context.Context, v T) chan error {
 	var errChan chan error = make(chan error, 1)
 	go func() {
 		defer close(errChan)
-		if err := s.pool.client.Publish(ctx, s.name, v).Err(); err != nil {
+		if err := s.Send(ctx, v); err != nil {
 			errChan <- err
 		}
 	}()

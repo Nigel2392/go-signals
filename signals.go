@@ -296,11 +296,7 @@ func SignalSend[T any](ctx context.Context, sig Signal[T], value T) error {
 func SignalSendAsync[T any](ctx context.Context, sig Signal[T], value T) <-chan error {
 	t, ok := sig.(Transmitter[T])
 	if !ok {
-		errChan := make(chan error, 1)
-		errChan <- ErrUnsupported.Wrapf(
-			"%T is not of type signals.Transmitter[T]", sig,
-		)
-		return errChan
+		return sig.SendAsync(ctx, value)
 	}
 
 	var lenRecv, recvIter = t.Receivers(ctx)
