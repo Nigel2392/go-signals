@@ -142,27 +142,6 @@ func TestSendAsync(t *testing.T) {
 	}
 }
 
-func TestPkgSendAsync(t *testing.T) {
-	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
-	var totalReceivers = TOTAL_AMOUNT
-
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
-
-	var errChan = signals.SignalSendAsync(t.Context(), signal, "This is a signal message!")
-	var errs []error = make([]error, 0)
-	for err := range errChan {
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if len(errs) != totalReceivers {
-		t.Errorf("Expected %d errors, got %d", totalReceivers, len(errs))
-	} else {
-		t.Logf("Received %d errors", len(errs))
-	}
-}
-
 func TestManyRecv(t *testing.T) {
 	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
 	var totalReceivers = TOTAL_AMOUNT

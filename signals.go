@@ -7,12 +7,8 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"sync/atomic"
 )
-
-type Transmitter[T any] interface {
-	Receivers(ctx context.Context) (_len int, _range iter.Seq[Receiver[T]])
-	Transmit(ctx context.Context, value T, recv Receiver[T]) error
-}
 
 // Signal interface.
 //
@@ -40,15 +36,7 @@ type Signal[T any] interface {
 	Clear(context.Context) error
 }
 
-var (
-	_ Signal[any]      = (*signal[any])(nil)
-	_ Transmitter[any] = (*signal[any])(nil)
-)
-
-type cache[T any] struct {
-	dirty bool
-	data  []Receiver[T]
-}
+var _ Signal[any] = (*signal[any])(nil)
 
 // Underlying signal struct for the Signal interface.
 //
@@ -56,9 +44,11 @@ type cache[T any] struct {
 type signal[T any] struct {
 	name      string        // Name of the signal.
 	receivers []Receiver[T] // List of receivers.
-	mu        *sync.RWMutex // Mutex for locking the signal.
+	mu        sync.Mutex    // Mutex for locking the signal.
 
-	cached cache[T]
+	// caching to avoid locking mutexes during Send
+	dirty  atomic.Bool
+	cached []Receiver[T]
 }
 
 // Create a new signal.
@@ -66,26 +56,20 @@ func New[T any](name string) Signal[T] {
 	return &signal[T]{
 		name:      name,
 		receivers: make([]Receiver[T], 0),
-		mu:        &sync.RWMutex{},
+		mu:        sync.Mutex{},
 	}
 }
 
 func (s *signal[T]) getReceivers() []Receiver[T] {
-	s.mu.RLock()
-	isDirty := s.cached.dirty
-	cached := s.cached.data
-	s.mu.RUnlock()
 
-	if !isDirty {
-		return cached
+	if s.dirty.Load() {
+		s.mu.Lock()
+		s.cached = slices.Clone(s.receivers)
+		s.dirty.Store(false)
+		s.mu.Unlock()
 	}
 
-	s.mu.Lock()
-	s.cached.data = slices.Clone(s.receivers)
-	s.cached.dirty = false
-	s.mu.Unlock()
-
-	return s.cached.data
+	return s.cached
 }
 
 // Return the name of the signal.
@@ -188,7 +172,10 @@ func (s *signal[T]) Connect(ctx context.Context, receivers ...Receiver[T]) error
 		s.receivers = append(s.receivers, receiver)
 	}
 
-	s.cached.dirty = len(receivers) > 0
+	s.dirty.Store(
+		s.dirty.Load() ||
+			len(receivers) > 0,
+	)
 
 	return nil
 }
@@ -227,7 +214,7 @@ func (s *signal[T]) Disconnect(ctx context.Context, other ...Receiver[T]) error 
 	}
 
 	s.receivers = newRecvs
-	s.cached.dirty = true
+	s.dirty.Store(true)
 
 	return nil
 }
@@ -248,7 +235,7 @@ func (s *signal[T]) Clear(ctx context.Context) error {
 	}
 
 	s.receivers = make([]Receiver[T], 0)
-	s.cached.dirty = true
+	s.dirty.Store(true)
 	return nil
 }
 
@@ -286,63 +273,4 @@ func (s *signal[T]) Receivers(ctx context.Context) (int, iter.Seq[Receiver[T]]) 
 			}
 		}
 	}
-}
-
-func SignalSend[T any](ctx context.Context, sig Signal[T], value T) error {
-	t, ok := sig.(Transmitter[T])
-	if !ok {
-		return ErrUnsupported.Wrapf(
-			"%T is not of type signals.Transmitter[T]", sig,
-		)
-	}
-
-	var err error
-	var errs []error = make([]error, 0)
-	var _, _range = t.Receivers(ctx)
-	for receiver := range _range {
-		err = t.Transmit(ctx, value, receiver)
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	// Return an error if any of the receivers returned an error.
-	if len(errs) > 0 {
-		return ErrSignal.WithCause(Err(fmt.Sprintf(
-			"error sending signal to %d receivers",
-			len(errs)), errs...,
-		))
-	}
-
-	return nil
-}
-
-func SignalSendAsync[T any](ctx context.Context, sig Signal[T], value T) <-chan error {
-	t, ok := sig.(Transmitter[T])
-	if !ok {
-		return sig.SendAsync(ctx, value)
-	}
-
-	var lenRecv, recvIter = t.Receivers(ctx)
-	var errChan chan error = make(chan error, lenRecv)
-	go func() {
-		var wg sync.WaitGroup
-		defer wg.Wait()
-		defer close(errChan)
-
-		wg.Add(lenRecv)
-
-		for receiver := range recvIter {
-			// Create a new goroutine for each receiver.
-			go func(receiver Receiver[T], wg *sync.WaitGroup) {
-				defer wg.Done()
-				errChan <- t.Transmit(ctx, value, receiver)
-			}(receiver, &wg)
-			// Yield the goroutine.
-			runtime.Gosched()
-		}
-		wg.Wait()
-	}()
-
-	return errChan
 }

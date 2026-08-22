@@ -97,7 +97,7 @@ func (m *Pool[T]) NewSignal(ctx context.Context, name string) Signal[T] {
 		return s
 	}
 
-	s = &signal[T]{name: name, receivers: make([]Receiver[T], 0), mu: &sync.RWMutex{}}
+	s = &signal[T]{name: name, receivers: make([]Receiver[T], 0)}
 	m.store(name, s)
 	return s
 }
@@ -108,7 +108,7 @@ func (m *Pool[T]) NewSignal(ctx context.Context, name string) Signal[T] {
 func (m *Pool[T]) CreateOrSend(ctx context.Context, name string, value T) error {
 	var s, ok = m.load(name)
 	if !ok {
-		s = &signal[T]{name: name, receivers: make([]Receiver[T], 0), mu: &sync.RWMutex{}}
+		s = &signal[T]{name: name, receivers: make([]Receiver[T], 0)}
 		m.store(name, s)
 	}
 	return s.Send(ctx, value)

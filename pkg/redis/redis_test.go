@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"errors"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,61 @@ type MyType struct {
 	Name string
 }
 
+func BenchmarkSignals(b *testing.B) {
+	b.StopTimer()
+
+	c, err := miniredis.Run()
+	if err != nil {
+		b.Fatalf("could not instantiate redis server: %v", err)
+	}
+
+	pool := pubsub.New[string](
+		PubSub(false, redis.NewClient(&redis.Options{
+			Addr: c.Addr(),
+		})),
+		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+			b.Log(string(debug.Stack()))
+			b.Error(err)
+		}),
+	)
+
+	var incr = new(atomic.Int64)
+
+	var signal = pool.NewSignal(b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+		incr.Add(1)
+		return nil
+	})
+
+	b.StartTimer()
+
+	var wg sync.WaitGroup
+
+	go func() {
+		for range pool.WaitLoop(b.Context(), true) {
+			// b.Log(v, err)
+			wg.Done()
+		}
+	}()
+
+	for b.Loop() {
+		wg.Add(1)
+
+		err := signal.Send(b.Context(), "This is a signal message!")
+		if err != nil {
+			b.Error(err)
+		}
+
+		wg.Wait()
+	}
+
+	if int(incr.Load()) != (totalReceivers * b.N) {
+		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+	}
+
+	pool.Close()
+}
+
 func TestPoolSend(t *testing.T) {
 	c, err := miniredis.Run()
 	if err != nil {
@@ -44,7 +100,7 @@ func TestPoolSend(t *testing.T) {
 	)
 
 	redisPool := pubsub.New[MyType](
-		PubSub(redis.NewClient(&redis.Options{
+		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime[MyType](time.Millisecond*10),
@@ -153,7 +209,7 @@ func TestPoolContextErr(t *testing.T) {
 	)
 
 	redisPool := pubsub.New[MyType](
-		PubSub(redis.NewClient(&redis.Options{
+		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime[MyType](time.Millisecond*10),
@@ -226,7 +282,7 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 	)
 
 	pool := pubsub.New[string](
-		PubSub(redis.NewClient(&redis.Options{
+		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime[string](time.Millisecond*10),
@@ -295,7 +351,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 	)
 
 	pool := pubsub.New(
-		PubSub(redis.NewClient(&redis.Options{
+		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime[string](time.Microsecond*200), // 0.2ms
@@ -366,7 +422,7 @@ func TestSendAsync(t *testing.T) {
 	)
 
 	pool := pubsub.New(
-		PubSub(redis.NewClient(&redis.Options{
+		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime[string](time.Millisecond*10),

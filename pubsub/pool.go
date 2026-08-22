@@ -14,6 +14,8 @@ import (
 	"github.com/elliotchance/orderedmap/v2"
 )
 
+var _ PubSubPool[any] = (*Pool[any])(nil)
+
 type Pool[T any] struct {
 	encoder encoder.Encoder
 
