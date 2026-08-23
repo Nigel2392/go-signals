@@ -109,6 +109,19 @@ func New[T any](pubsub PubSub, opts ...PoolOption[T]) *Pool[T] {
 	return pool
 }
 
+func GoNew[T any](ctx context.Context, pubsub PubSub, opts ...PoolOption[T]) *Pool[T] {
+	var pool = New[T](pubsub, opts...)
+	if pool.data == nil {
+		go pool.Loop(ctx)
+		return pool
+	}
+	go func() {
+		for range pool.WaitLoop(ctx) {
+		}
+	}()
+	return pool
+}
+
 func (r *Pool[T]) ID() uuid.UUID {
 	return r.inst
 }
@@ -195,7 +208,9 @@ func (r *Pool[T]) NewSignal(_ context.Context, name string) signals.Signal[T] {
 // Using this function is also great for benchmarking, as it isnt reliant on the timer.
 func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[*Handler[T], error] {
 	if r.data == nil {
-		panic("cannot call Pool.Handle without having called Pool.SetChannel")
+		panic(signals.ErrUnsupported.Wrap(
+			"cannot call Pool.Handle without having called Pool.SetChannel",
+		))
 	}
 
 	return func(yield func(*Handler[T], error) bool) {
@@ -255,11 +270,15 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[*Handler[T], error] {
 
 func (r *Pool[T]) Loop(ctx context.Context) {
 	if r.exit != nil {
-		panic("Pool.Loop() can only be called when in the stopped state")
+		panic(signals.ErrUnsupported.Wrap(
+			"Pool.Loop() can only be called when in the stopped state",
+		))
 	}
 
 	if r.data != nil {
-		panic("Pool.Loop() cannot be called when synchronous mode is active")
+		panic(signals.ErrUnsupported.Wrap(
+			"Pool.Loop() cannot be called when synchronous mode is active",
+		))
 	}
 
 	tick := time.NewTicker(r.tickTime)

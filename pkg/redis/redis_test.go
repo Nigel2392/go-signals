@@ -31,12 +31,11 @@ type MyType struct {
 	Name string
 }
 
-func BenchmarkSignals(b *testing.B) {
-	b.StopTimer()
+func TestSignalsSynchronous(t *testing.T) {
 
 	c, err := miniredis.Run()
 	if err != nil {
-		b.Fatalf("could not instantiate redis server: %v", err)
+		t.Fatalf("could not instantiate redis server: %v", err)
 	}
 
 	pool := pubsub.New[string](
@@ -44,48 +43,44 @@ func BenchmarkSignals(b *testing.B) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
-			b.Log(string(debug.Stack()))
-			b.Error(err)
+			t.Log(string(debug.Stack()))
+			t.Error(err)
 		}),
 	)
 
 	var incr = new(atomic.Int64)
 
-	var signal = pool.NewSignal(b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.NewSignal(t.Context(), strconv.Itoa(int(time.Now().UnixNano())))
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 		incr.Add(1)
 		return nil
 	})
 
-	b.StartTimer()
-
 	var wg sync.WaitGroup
 
 	go func() {
-		for h, err := range pool.WaitLoop(b.Context()) {
+		for h, err := range pool.WaitLoop(t.Context()) {
 			// b.Log(v, err)
 			if err != nil {
-				b.Error(err)
+				t.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			h.Process(t.Context())
 			wg.Done()
 		}
 	}()
 
-	for b.Loop() {
-		wg.Add(1)
+	wg.Add(1)
 
-		err := signal.Send(b.Context(), "This is a signal message!")
-		if err != nil {
-			b.Error(err)
-		}
-
-		wg.Wait()
+	err = signal.Send(t.Context(), "This is a signal message!")
+	if err != nil {
+		t.Error(err)
 	}
 
-	if int(incr.Load()) != (totalReceivers * b.N) {
-		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+	wg.Wait()
+
+	if int(incr.Load()) != (totalReceivers) {
+		t.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers))
 	}
 
 	pool.Close()

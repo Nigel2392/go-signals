@@ -34,6 +34,11 @@ type PubSubPool[T any] interface {
 
 	// WaitLoop is optimized to aggregate all central signals into the [PubSubPool]'s datachannel,
 	// allowing for a lot more flexibility when it comes to testing and handling received data.
+	//
+	// It does not rely on the ticker to retrieve values.
+	//
+	// This means that any values sent from a signal propagate as
+	// quickly as possible, only being limited by the scheduler.
 	WaitLoop(ctx context.Context) iter.Seq2[*Handler[T], error]
 
 	// Send data across the pool for a topic to use.

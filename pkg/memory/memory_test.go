@@ -118,6 +118,54 @@ func BenchmarkSignals(b *testing.B) {
 	pool.Close()
 }
 
+func TestSignalsSynchronous(t *testing.T) {
+
+	pool := pubsub.New[string](
+		PubSub(false),
+		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+			t.Log(string(debug.Stack()))
+			t.Error(err)
+		}),
+	)
+
+	var incr = new(atomic.Int64)
+
+	var signal = pool.NewSignal(t.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+		incr.Add(1)
+		return nil
+	})
+
+	var wg sync.WaitGroup
+
+	go func() {
+		for h, err := range pool.WaitLoop(t.Context()) {
+			// b.Log(v, err)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			h.Process(t.Context())
+			wg.Done()
+		}
+	}()
+
+	wg.Add(1)
+
+	err := signal.Send(t.Context(), "This is a signal message!")
+	if err != nil {
+		t.Error(err)
+	}
+
+	wg.Wait()
+
+	if int(incr.Load()) != (totalReceivers) {
+		t.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers))
+	}
+
+	pool.Close()
+}
+
 func TestPoolSend(t *testing.T) {
 
 	var (
