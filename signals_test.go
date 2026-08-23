@@ -100,12 +100,51 @@ func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc fun
 }
 
 func BenchmarkSignals(b *testing.B) {
+	b.StopTimer()
 	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
+	var incr int
 
-	connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return nil })
+	connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+		incr++
+		return nil
+	})
+
+	b.StartTimer()
+	b.ResetTimer()
 
 	for b.Loop() {
 		signal.Send(b.Context(), "This is a signal message!")
+	}
+
+	if incr != TOTAL_AMOUNT*b.N {
+		b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr)
+	}
+}
+
+func BenchmarkSignalsAsync(b *testing.B) {
+	b.StopTimer()
+	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
+	var incr int64
+
+	connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+		// safe as long as SendAsync doesnt execute each receiver in a separate goroutine
+		incr++
+		return nil
+	})
+
+	b.StartTimer()
+	b.ResetTimer()
+
+	for b.Loop() {
+
+		errCh := signal.SendAsync(b.Context(), "This is a signal message!")
+		for range errCh {
+		}
+
+	}
+
+	if incr != int64(TOTAL_AMOUNT*b.N) {
+		b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr)
 	}
 }
 
@@ -135,10 +174,17 @@ func TestSendAsync(t *testing.T) {
 		}
 	}
 
-	if len(errs) != totalReceivers {
-		t.Errorf("Expected %d errors, got %d", totalReceivers, len(errs))
-	} else {
-		t.Logf("Received %d errors", len(errs))
+	if len(errs) != 1 {
+		t.Fatalf("Expected %d grouped error, got %d", 1, len(errs))
+	}
+
+	err, ok := signals.SignalError(errs[0])
+	if !ok {
+		t.Fatalf("Expected to retrieve signals.Error, got %T", errs[0])
+	}
+
+	if len(err.Errors) != totalReceivers {
+		t.Fatalf("Expected %d errors, got %d", totalReceivers, len(errs))
 	}
 }
 

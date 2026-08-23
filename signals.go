@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"runtime"
+	"math"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -133,27 +133,83 @@ func (s *signal[T]) SendAsync(ctx context.Context, value T) chan error {
 	}
 
 	// Send the signal to each receiver.
-	var errChan chan error = make(chan error, len(recvs))
+	var errChan chan error = make(chan error, 1)
 	go func() {
-		var wg sync.WaitGroup
-		defer wg.Wait()
 		defer close(errChan)
+		var errs []error
 
-		wg.Add(len(recvs))
 		for _, receiver := range recvs {
-			// Create a new goroutine for each receiver.
-			go func(receiver Receiver[T], wg *sync.WaitGroup) {
-				defer wg.Done()
-				errChan <- receiver.Receive(ctx, s, value)
-			}(receiver, &wg)
-			// Yield the goroutine.
-			runtime.Gosched()
+			err := receiver.Receive(ctx, s, value)
+			if err != nil {
+				if errs == nil {
+					errs = make([]error, 0, int(math.Max(float64(len(recvs))/20, float64(1))))
+				}
+
+				errs = append(errs, err)
+			}
 		}
-		wg.Wait()
+
+		if len(errs) > 0 {
+			errChan <- Error{Val: "error(s) while executing receivers", Errors: errs}
+		}
 	}()
 
 	return errChan
 }
+
+//	func (s *signal[T]) SendAsync(ctx context.Context, value T) chan error {
+//		recvs := s.getReceivers()
+//
+//		// Check if there are any receivers.
+//		if len(recvs) == 0 {
+//			return nil
+//		}
+//
+//		// Send the signal to each receiver.
+//		var batchSize = 500
+//		var batches = (len(recvs) + batchSize - 1) / batchSize
+//		var errChan chan error = make(chan error, int(math.Max(float64(batches)/20, float64(4))))
+//		go func() {
+//			defer close(errChan)
+//			var wg = new(sync.WaitGroup)
+//			var wgPtr = (*sync.WaitGroup)(noescape(unsafe.Pointer(wg)))
+//
+//			wg.Add(batches)
+//
+//			for batch := range slices.Chunk(recvs, batchSize) {
+//				go processBatch(ctx, wgPtr, errChan, s, batch, value)
+//			}
+//
+//			wg.Wait()
+//		}()
+//
+//		return errChan
+//	}
+//
+//	//go:nosplit
+//	func noescape(p unsafe.Pointer) unsafe.Pointer {
+//		x := uintptr(p)
+//		return unsafe.Pointer(x ^ 0)
+//	}
+//
+//	func processBatch[T any](ctx context.Context, wg *sync.WaitGroup, errChan chan error, signal Signal[T], list []Receiver[T], value T) {
+//		defer wg.Done()
+//		var errs []error
+//
+//		for _, receiver := range list {
+//			err := receiver.Receive(ctx, signal, value)
+//			if err != nil {
+//				if errs == nil {
+//					errs = make([]error, 0, int(math.Max(float64(len(list))/20, float64(5))))
+//				}
+//				errChan <- err
+//			}
+//		}
+//
+//		if len(errs) > 0 {
+//			errChan <- Error{Val: "error(s) while executing receivers", Errors: errs}
+//		}
+//	}
 
 // Connect a receiver to the signal.
 // This will call the receiver's Signal, setting the receiver's signal to this signal.
