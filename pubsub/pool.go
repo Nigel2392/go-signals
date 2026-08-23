@@ -116,7 +116,15 @@ func GoNew[T any](ctx context.Context, pubsub PubSub, opts ...PoolOption[T]) *Po
 		return pool
 	}
 	go func() {
-		for range pool.WaitLoop(ctx) {
+		for h, err := range pool.WaitLoop(ctx) {
+			if err != nil {
+				pool.callErr(err)
+				continue
+			}
+
+			if err := h.Process(ctx); err != nil {
+				pool.callErr(err)
+			}
 		}
 	}()
 	return pool
