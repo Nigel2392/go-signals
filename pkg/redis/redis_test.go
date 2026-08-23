@@ -168,6 +168,156 @@ func TestPoolSend(t *testing.T) {
 		mt.ID = uuid.New()
 		t.Logf("FOURTH:  Received: %T %v", mt, mt)
 		typeList = append(typeList, mt)
+
+		msg := pubsub.MessageFromContext(ctx)
+		if msg.Channel != "test-pool-channel-1" {
+			t.Errorf("Message channel is not %q: %q", "test-pool-channel-1", msg.Channel)
+		}
+
+		if msg.Sender != pubsub.PoolFromContext[MyType](ctx).ID() {
+			t.Errorf(
+				"ID should match! %s != %s",
+				msg.Sender,
+				pubsub.PoolFromContext[MyType](ctx).ID(),
+			)
+		}
+
+		return nil
+	})
+
+	err = test1.Send(t.Context(), MyType{
+		ID:   uuid.Max,
+		Name: "MyTypeName",
+	})
+	if err != nil {
+		t.Fatalf("could not send signal: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+
+	if len(typeList) != 4 {
+		t.Errorf("Expected 4 items in typeList, got %d: %v", len(typeList), typeList)
+	}
+
+	mu.Unlock()
+
+	select {
+	case err, ok := <-errCh:
+		if ok {
+			t.Fatal(err)
+		}
+	default:
+	}
+
+	close(exitCh)
+}
+
+func TestMultiplePoolsSend(t *testing.T) {
+	c, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("could not instantiate redis server: %v", err)
+	}
+
+	t.Cleanup(c.Close)
+
+	var (
+		errCh  = make(chan error, 10)
+		exitCh = make(chan struct{}, 1)
+	)
+
+	redisPool1 := pubsub.New[MyType](
+		PubSub(true, redis.NewClient(&redis.Options{
+			Addr: c.Addr(),
+		})),
+		pubsub.PoolTickTime[MyType](time.Millisecond),
+		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
+			errCh <- err
+		}),
+	)
+
+	go redisPool1.Loop(t.Context())
+
+	var mu = new(sync.Mutex)
+	var typeList []MyType
+	test1 := redisPool1.NewSignal(t.Context(), "test-pool-channel-1")
+	test1.Listen(t.Context(), func(ctx context.Context, s signals.Signal[MyType], mt MyType) error {
+		mu.Lock()
+		defer mu.Unlock()
+		t.Logf("INITIAL: Received: %T %v", mt, mt)
+		typeList = append(typeList, mt)
+		return nil
+	})
+
+	test1.Listen(t.Context(), func(ctx context.Context, s signals.Signal[MyType], mt MyType) error {
+		mu.Lock()
+		defer mu.Unlock()
+		t.Logf("SECOND:  Received: %T %v", mt, mt)
+		typeList = append(typeList, mt)
+		return nil
+	})
+
+	// These shouldnt activate
+	test2 := redisPool1.NewSignal(t.Context(), "test-pool-channel-2")
+	test2.Listen(t.Context(), func(ctx context.Context, s signals.Signal[MyType], mt MyType) error {
+		mu.Lock()
+		defer mu.Unlock()
+		t.Logf("INITIAL: Received: %T %v", mt, mt)
+		typeList = append(typeList, mt)
+		return nil
+	})
+	test2.Listen(t.Context(), func(ctx context.Context, s signals.Signal[MyType], mt MyType) error {
+		mu.Lock()
+		defer mu.Unlock()
+		t.Logf("SECOND:  Received: %T %v", mt, mt)
+		typeList = append(typeList, mt)
+		return nil
+	})
+
+	// These SHOULD activate
+	redisPool2 := pubsub.New[MyType](
+		PubSub(true, redis.NewClient(&redis.Options{
+			Addr: c.Addr(),
+		})),
+		pubsub.PoolTickTime[MyType](time.Millisecond),
+		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
+			errCh <- err
+		}),
+	)
+
+	go redisPool2.Loop(t.Context())
+
+	test3 := redisPool2.NewSignal(t.Context(), "test-pool-channel-1")
+	test3.Listen(t.Context(), func(ctx context.Context, s signals.Signal[MyType], mt MyType) error {
+		mu.Lock()
+		defer mu.Unlock()
+		mt.ID = uuid.New()
+		t.Logf("THIRD:   Received: %T %v", mt, mt)
+		typeList = append(typeList, mt)
+		return nil
+	})
+	test3.Listen(t.Context(), func(ctx context.Context, s signals.Signal[MyType], mt MyType) error {
+		mu.Lock()
+		defer mu.Unlock()
+		mt.ID = uuid.New()
+		typeList = append(typeList, mt)
+
+		msg := pubsub.MessageFromContext(ctx)
+		if msg.Channel != "test-pool-channel-1" {
+			t.Errorf("Message channel is not %q: %q", "test-pool-channel-1", msg.Channel)
+		}
+
+		if msg.Sender == pubsub.PoolFromContext[MyType](ctx).ID() {
+			t.Errorf(
+				"ID should not match! %s == %s",
+				msg.Sender,
+				pubsub.PoolFromContext[MyType](ctx).ID(),
+			)
+		}
+
+		t.Logf("Message: %v", msg)
+
 		return nil
 	})
 

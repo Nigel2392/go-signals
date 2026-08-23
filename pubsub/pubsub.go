@@ -2,7 +2,9 @@ package pubsub
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
+	"uuid"
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
@@ -23,6 +25,9 @@ type Encoder = encoder.Encoder
 type PubSubPool[T any] interface {
 	signals.SignalPool[T]
 	ChannelBinder
+
+	// The instance ID of the pool
+	ID() uuid.UUID
 
 	// Loop is optimized to run in a separate goroutine, called by `go pool.Loop(ctx)`
 	Loop(ctx context.Context)
@@ -58,22 +63,46 @@ type PubSubBinder interface {
 	BindChannel(ChannelBinder)
 }
 
+// PubSubMsgMaker allows for [PubSub] objects
+// to add metadata or perform other changes on messages
+type PubSubMsgMaker interface {
+	MakeMessage(ctx context.Context, topic string, msg *Message, sending bool) *Message
+}
+
 // Subscribers are returned by the [PubSub] interface, these subscribers are
 // used to retrieve data to send to the receiver objects.
 type Subscriber interface {
 	Close() error
+
 	// TryReceive attempts a non-blocking read.
 	// Returns (payload, true) if a message is immediately available.
 	// Returns (nil, false) if the queue is empty.
+	//
+	// The returned payload should always be generated
+	// from serializing the Message.
 	TryReceive() ([]byte, bool)
 }
 
-// Messages transmitted internally across the [ChannelBinder]'s data channel.
+// Messages are the primary object transmitted throughout the application.
 //
 // These can also be used by [PubSub] backends to allow for [PubSubPool.WaitLoop] functionality.
 type Message struct {
+	// The UUID of the sender pool
+	Sender uuid.UUID
+
+	// The channel this message is for/from
 	Channel string
-	Data    []byte
+
+	// just in case json is your preferred encoding.
+	//
+	// internal detail:
+	// when using the [chan *Message] from the [ChannelBinder]
+	// the data sent through [PubSub.Publish] is also a [Message]
+	Data json.RawMessage
+
+	// Metadata belonging to the message
+	// Think of possible session information, etc.
+	Meta map[string]any
 }
 
 // ChannelBinder is implemented by the [Pool] type to

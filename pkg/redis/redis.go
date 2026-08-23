@@ -41,6 +41,22 @@ func (s *redisPubSub) Publish(ctx context.Context, topic string, data []byte) er
 	return s.client.Publish(ctx, topic, data).Err()
 }
 
+func (s *redisPubSub) MakeMessage(ctx context.Context, topic string, message *pubsub.Message, sending bool) *pubsub.Message {
+	if !sending {
+		return message
+	}
+
+	if c, ok := s.client.(*redis.Client); ok {
+		opts := c.Options()
+		message.Meta["sender"] = map[string]any{
+			"client_name": opts.ClientName,
+			"username":    opts.Username,
+		}
+	}
+
+	return message
+}
+
 func (s *redisPubSub) Subscribe(ctx context.Context, topic string) (pubsub.Subscriber, error) {
 	ps := s.client.Subscribe(ctx, topic)
 	sub := &redisSubscriber{
@@ -68,7 +84,9 @@ func (s *redisSubscriber) forward(out chan<- *pubsub.Message) {
 	for msg := range s.ch {
 		out <- &pubsub.Message{
 			Channel: msg.Channel,
-			Data:    []byte(msg.Payload),
+
+			// payload is an encoded pubsub.Message!!!
+			Data: []byte(msg.Payload),
 		}
 	}
 }

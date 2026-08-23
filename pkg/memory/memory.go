@@ -53,7 +53,9 @@ func (s *memoryPubSub) Publish(ctx context.Context, topic string, data []byte) e
 
 	sub.ch <- &pubsub.Message{
 		Channel: topic,
-		Data:    data,
+
+		// data is an encoded pubsub.Message!!!
+		Data: data,
 	}
 	return nil
 }

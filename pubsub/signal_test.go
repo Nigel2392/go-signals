@@ -44,6 +44,10 @@ func BenchmarkSignals(b *testing.B) {
 
 	var wg sync.WaitGroup
 
+	// benchmarks can only be done with WaitLoop!
+	// this is the only way we can add waitgroups to ensure every task finished
+	// at a possible (hidden) cost of benchmark performance.
+	// hidden because we cannot consistently test [Pool.Loop] this way.
 	go func() {
 		for h, err := range pool.WaitLoop(b.Context()) {
 			// b.Log(v, err)
@@ -116,6 +120,23 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 
 	receivedValue := make(chan string, 1)
 	recv, err := sig.Listen(context.Background(), func(ctx context.Context, s signals.Signal[string], val string) error {
+
+		msg := MessageFromContext(ctx)
+		if msg.Channel != "test_topic" {
+			t.Errorf("Message channel is not %q: %q", "test_topic", msg.Channel)
+		}
+
+		t.Logf("Value: %q", val)
+		t.Logf("Message: %v", msg)
+
+		if msg.Sender != PoolFromContext[string](ctx).ID() {
+			t.Errorf(
+				"ID should match! %s != %s",
+				msg.Sender,
+				PoolFromContext[string](ctx).ID(),
+			)
+		}
+
 		receivedValue <- val
 		return nil
 	})
