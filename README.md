@@ -4,7 +4,7 @@ A type-safe package for sending signals application-wide in Go.
 
 Signals are a way to communicate between different parts of your application.
 
-Signals can also be used for communication across the network.
+**Signals can also be used for communication across the network.**
 
 Each subpackage is tested against race conditions and benchmarked to measure performance.
 
