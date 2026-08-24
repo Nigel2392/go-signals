@@ -3,7 +3,9 @@ package signals_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -122,29 +124,43 @@ func BenchmarkSignals(b *testing.B) {
 }
 
 func BenchmarkSignalsAsync(b *testing.B) {
-	b.StopTimer()
-	var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
-	var incr int64
-
-	connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
-		// safe as long as SendAsync doesnt execute each receiver in a separate goroutine
-		incr++
-		return nil
-	})
-
-	b.StartTimer()
-	b.ResetTimer()
-
-	for b.Loop() {
-
-		errCh := signal.SendAsync(b.Context(), "This is a signal message!")
-		for range errCh {
-		}
-
+	var batchSizes = []int{
+		10, 50, 100, 250, 500, 1000,
 	}
 
-	if incr != int64(TOTAL_AMOUNT*b.N) {
-		b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr)
+	if signals.DEFAULT_BATCH_SIZE == 0 {
+		batchSizes = []int{0}
+	}
+
+	for _, size := range batchSizes {
+		b.Run(fmt.Sprintf("BenchmarkSignalsAsyncBatch%d", size), func(b *testing.B) {
+			b.StopTimer()
+			var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
+			var incr atomic.Int64
+
+			connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+				// safe as long as SendAsync doesnt execute each receiver in a separate goroutine
+				incr.Add(1)
+				return nil
+			})
+
+			ctx := signals.ContextWithBatchSize(b.Context(), size)
+
+			b.StartTimer()
+			b.ResetTimer()
+
+			for b.Loop() {
+
+				errCh := signal.SendAsync(ctx, "This is a signal message!")
+				for range errCh { // ensures that we actually wait for all receivers to finish
+				}
+
+			}
+
+			if incr.Load() != int64(TOTAL_AMOUNT*b.N) {
+				b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr.Load())
+			}
+		})
 	}
 }
 

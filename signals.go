@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"math"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -112,104 +111,6 @@ func (s *signal[T]) Send(ctx context.Context, value T) error {
 
 	return nil
 }
-
-// Send a signal to all receivers asynchronously.
-//
-// Will error if there are no receivers.
-//
-// Returns an error, if any of the receivers return an error.
-//
-// This function is not fully tested, and might produce unexpected results.
-//
-// This function also will not check if there are any receivers.
-//
-// Returns a channel which will contain all errors from the receivers.
-func (s *signal[T]) SendAsync(ctx context.Context, value T) chan error {
-	recvs := s.getReceivers()
-
-	// Check if there are any receivers.
-	if len(recvs) == 0 {
-		return nil
-	}
-
-	// Send the signal to each receiver.
-	var errChan chan error = make(chan error, 1)
-	go func() {
-		defer close(errChan)
-		var errs []error
-
-		for _, receiver := range recvs {
-			err := receiver.Receive(ctx, s, value)
-			if err != nil {
-				if errs == nil {
-					errs = make([]error, 0, int(math.Max(float64(len(recvs))/20, float64(1))))
-				}
-
-				errs = append(errs, err)
-			}
-		}
-
-		if len(errs) > 0 {
-			errChan <- Error{Val: "error(s) while executing receivers", Errors: errs}
-		}
-	}()
-
-	return errChan
-}
-
-//	func (s *signal[T]) SendAsync(ctx context.Context, value T) chan error {
-//		recvs := s.getReceivers()
-//
-//		// Check if there are any receivers.
-//		if len(recvs) == 0 {
-//			return nil
-//		}
-//
-//		// Send the signal to each receiver.
-//		var batchSize = 500
-//		var batches = (len(recvs) + batchSize - 1) / batchSize
-//		var errChan chan error = make(chan error, int(math.Max(float64(batches)/20, float64(4))))
-//		go func() {
-//			defer close(errChan)
-//			var wg = new(sync.WaitGroup)
-//			var wgPtr = (*sync.WaitGroup)(noescape(unsafe.Pointer(wg)))
-//
-//			wg.Add(batches)
-//
-//			for batch := range slices.Chunk(recvs, batchSize) {
-//				go processBatch(ctx, wgPtr, errChan, s, batch, value)
-//			}
-//
-//			wg.Wait()
-//		}()
-//
-//		return errChan
-//	}
-//
-//	//go:nosplit
-//	func noescape(p unsafe.Pointer) unsafe.Pointer {
-//		x := uintptr(p)
-//		return unsafe.Pointer(x ^ 0)
-//	}
-//
-//	func processBatch[T any](ctx context.Context, wg *sync.WaitGroup, errChan chan error, signal Signal[T], list []Receiver[T], value T) {
-//		defer wg.Done()
-//		var errs []error
-//
-//		for _, receiver := range list {
-//			err := receiver.Receive(ctx, signal, value)
-//			if err != nil {
-//				if errs == nil {
-//					errs = make([]error, 0, int(math.Max(float64(len(list))/20, float64(5))))
-//				}
-//				errChan <- err
-//			}
-//		}
-//
-//		if len(errs) > 0 {
-//			errChan <- Error{Val: "error(s) while executing receivers", Errors: errs}
-//		}
-//	}
 
 // Connect a receiver to the signal.
 // This will call the receiver's Signal, setting the receiver's signal to this signal.
