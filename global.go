@@ -35,3 +35,16 @@ func Get(name string) Signal[any] {
 func Listen(ctx context.Context, name string, r func(context.Context, Signal[any], any) error) {
 	defaultSignalPool.Listen(ctx, name, r)
 }
+
+type batchSizeContextKey struct{}
+
+func ContextWithBatchSize(ctx context.Context, size int) context.Context {
+	return context.WithValue(ctx, batchSizeContextKey{}, size)
+}
+
+func BatchSize(ctx context.Context) int {
+	if bs, ok := ctx.Value(batchSizeContextKey{}).(int); ok {
+		return bs
+	}
+	return DEFAULT_BATCH_SIZE
+}

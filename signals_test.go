@@ -132,7 +132,7 @@ func BenchmarkSignalsAsync(b *testing.B) {
 	}
 
 	for _, size := range batchSizes {
-		b.Run(fmt.Sprintf("BenchmarkSignalsAsyncBatch%d", size), func(b *testing.B) {
+		b.Run(fmt.Sprintf("Batch%d", size), func(b *testing.B) {
 			b.StopTimer()
 			var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
 			// dont use atomic int, or check the value for correctness unless DEFAULT_BATCH_SIZE != 0 (i.e. build tag batches = false)
@@ -156,7 +156,9 @@ func BenchmarkSignalsAsync(b *testing.B) {
 
 			}
 
-			b.Log(incr)
+			if testing.Verbose() {
+				b.Log(incr)
+			}
 
 			if signals.DEFAULT_BATCH_SIZE == 0 && incr != int64(TOTAL_AMOUNT*b.N) {
 				b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr)

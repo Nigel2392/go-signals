@@ -371,27 +371,6 @@ func (r *Pool[T]) doWork(ctx context.Context) (stop bool) {
 	return false
 }
 
-func (r *Pool[T]) processReceivers(ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(error)) {
-
-	ctx = contextWithPool(ctx, r)
-
-receiverLoop:
-	for _, receiver := range receivers {
-
-		if r.closed.Load() || ctx.Err() != nil {
-			return
-		}
-
-		err := receiver.Receive(ctx, sig, val)
-		if err != nil {
-			callErr(signals.ErrReceiver.WithCause(err).Wrapf(
-				"receiver %q:", receiver.ID(),
-			))
-			continue receiverLoop
-		}
-	}
-}
-
 func (r *Pool[T]) newSub(signal string, createIfNotExists bool) *subscriber[T] {
 	s, ok := r.subscribers[signal]
 	if ok {

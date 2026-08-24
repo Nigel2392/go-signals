@@ -10,9 +10,7 @@ import (
 
 var DEFAULT_BATCH_SIZE = 0
 
-func ContextWithBatchSize(ctx context.Context, _ int) context.Context {
-	return ctx
-}
+const BATCHES = false
 
 // Send a signal to all receivers asynchronously.
 //

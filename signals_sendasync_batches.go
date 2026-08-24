@@ -10,13 +10,9 @@ import (
 	"unsafe"
 )
 
-var DEFAULT_BATCH_SIZE = 8
+var DEFAULT_BATCH_SIZE = 500
 
-type batchSizeContextKey struct{}
-
-func ContextWithBatchSize(ctx context.Context, size int) context.Context {
-	return context.WithValue(ctx, batchSizeContextKey{}, size)
-}
+const BATCHES = true
 
 func (s *signal[T]) SendAsync(ctx context.Context, value T) chan error {
 	recvs := s.getReceivers()
@@ -26,12 +22,7 @@ func (s *signal[T]) SendAsync(ctx context.Context, value T) chan error {
 		return nil
 	}
 
-	var batchSize = DEFAULT_BATCH_SIZE
-	if bs, ok := ctx.Value(batchSizeContextKey{}).(int); ok {
-		batchSize = bs
-	}
-
-	// Send the signal to each receiver.
+	var batchSize = BatchSize(ctx)
 	var batches = (len(recvs) + batchSize - 1) / batchSize
 	var errChan chan error = make(chan error, batchSize)
 	go func() {
