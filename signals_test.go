@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -136,11 +135,11 @@ func BenchmarkSignalsAsync(b *testing.B) {
 		b.Run(fmt.Sprintf("BenchmarkSignalsAsyncBatch%d", size), func(b *testing.B) {
 			b.StopTimer()
 			var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
-			var incr atomic.Int64
+			// dont use atomic int, or check the value for correctness unless DEFAULT_BATCH_SIZE != 0 (i.e. build tag batches = false)
+			var incr int64
 
 			connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
-				// safe as long as SendAsync doesnt execute each receiver in a separate goroutine
-				incr.Add(1)
+				incr++
 				return nil
 			})
 
@@ -157,8 +156,10 @@ func BenchmarkSignalsAsync(b *testing.B) {
 
 			}
 
-			if incr.Load() != int64(TOTAL_AMOUNT*b.N) {
-				b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr.Load())
+			b.Log(incr)
+
+			if signals.DEFAULT_BATCH_SIZE == 0 && incr != int64(TOTAL_AMOUNT*b.N) {
+				b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr)
 			}
 		})
 	}
