@@ -1,0 +1,68 @@
+package pubsub2
+
+import (
+	"slices"
+	"sync/atomic"
+
+	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/pubsub"
+)
+
+type subscriber struct {
+	pubsub    pubsub.Subscriber
+	receivers *orderedMap[any]
+
+	_dirty  atomic.Bool
+	_cached []signals.Receiver[any]
+}
+
+func (s *subscriber) _undirtify() {
+	s._cached = slices.Clone(s.receivers.list())
+}
+
+func (s *subscriber) checkDirty() {
+	if s._dirty.Load() {
+		s._undirtify()
+		s._dirty.Store(false)
+	}
+}
+
+func (s *subscriber) add(r signals.Receiver[any]) (isNew bool) {
+	isNew = s.receivers.set(r.ID(), r)
+	if isNew {
+		s._dirty.Store(true)
+	}
+	return isNew
+}
+
+func (s *subscriber) del(r interface{ ID() string }) (deleted bool) {
+	deleted = s.receivers.delete(r.ID())
+	if deleted {
+		s._dirty.Store(true)
+	}
+	return deleted
+}
+
+func (s *subscriber) clear() {
+	s._dirty.Store(s.receivers != nil && s.receivers.length() > 0)
+	s.receivers.clear()
+}
+
+func (s *subscriber) check(sigName string) error {
+	if s.pubsub == nil {
+		return nil
+	}
+
+	if s.receivers != nil && s.receivers.length() > 0 {
+		return nil
+	}
+
+	if err := s.pubsub.Close(); err != nil {
+		return signals.ErrSignal.WithCause(err).Wrapf(
+			"could not close pubsub channel %q", sigName,
+		)
+	}
+
+	s.pubsub = nil
+	return nil
+}
