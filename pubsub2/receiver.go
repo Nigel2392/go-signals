@@ -27,9 +27,8 @@ func (r *ifaceReceiver[T]) Signal() signals.Signal[any] {
 
 // Receives the signal object and value
 func (r *ifaceReceiver[T]) Receive(ctx context.Context, s signals.Signal[any], val any) error {
-	var ifaceVal = (*iface)(unsafe.Pointer(&s))
-	var sig = (*wrappedSignal[T])(ifaceVal.ptr)
-	return r.Receiver.Receive(ctx, (*signal[T])(sig), val.(T))
+	var ifaceVal = (*iface)(unsafe.Pointer(&s)) // ptr is [wrappedSignal], can cast to [signal]
+	return r.Receiver.Receive(ctx, (*signal[T])(ifaceVal.ptr), val.(T))
 }
 
 type wrappedReceiver[T any] receiver[T]
@@ -64,9 +63,8 @@ type iface struct {
 
 // Receives the signal object and value
 func (r *wrappedReceiver[T]) Receive(ctx context.Context, s signals.Signal[any], val any) error {
-	var ifaceVal = (*iface)(unsafe.Pointer(&s))
-	var sig = (*wrappedSignal[T])(ifaceVal.ptr)
-	return (*receiver[T])(r).Receive(ctx, (*signal[T])(sig), val.(T))
+	var ifaceVal = (*iface)(unsafe.Pointer(&s)) // ptr is [wrappedSignal], can cast to [signal]
+	return (*receiver[T])(r).Receive(ctx, (*signal[T])(ifaceVal.ptr), val.(T))
 }
 
 // Disconnects the receiver from the signal.

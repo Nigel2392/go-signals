@@ -7,28 +7,39 @@ import (
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
 )
 
-type PoolOption[T any] func(p *Pool[T])
+type ConfigPool interface {
+	WithEncoder(encoder.Encoder)
+	WithTickDuration(time.Duration)
+	WithInstanceID(uuid.UUID)
+}
 
-func PoolEncoder[T any](encoder encoder.Encoder) PoolOption[T] {
-	return func(p *Pool[T]) {
-		p.encoder = encoder
+type ConfigErrPool[POOLTYPE ConfigErrPool[POOLTYPE]] interface {
+	WithOnError(func(POOLTYPE, error))
+}
+
+type PoolOption func(p ConfigPool)
+
+func PoolEncoder[T any](enc encoder.Encoder) PoolOption {
+	return func(p ConfigPool) {
+		p.WithEncoder(enc)
 	}
 }
 
-func PoolOnError[T any](fn func(*Pool[T], error)) PoolOption[T] {
-	return func(p *Pool[T]) {
-		p.onErr = fn
+func PoolOnError[POOLTYPE ConfigErrPool[POOLTYPE]](fn func(POOLTYPE, error)) PoolOption {
+	return func(p ConfigPool) {
+		errSet := p.(POOLTYPE)
+		errSet.WithOnError(fn)
 	}
 }
 
-func PoolTickTime[T any](tickTime time.Duration) PoolOption[T] {
-	return func(p *Pool[T]) {
-		p.tickTime = tickTime
+func PoolTickTime(tickTime time.Duration) PoolOption {
+	return func(p ConfigPool) {
+		p.WithTickDuration(tickTime)
 	}
 }
 
-func PoolWithUUID[T any](id uuid.UUID) PoolOption[T] {
-	return func(p *Pool[T]) {
-		p.inst = id
+func PoolWithUUID[T any](id uuid.UUID) PoolOption {
+	return func(p ConfigPool) {
+		p.WithInstanceID(id)
 	}
 }

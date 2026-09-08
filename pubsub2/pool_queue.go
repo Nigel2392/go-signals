@@ -5,19 +5,26 @@ import (
 	"sync/atomic"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/internal/omap"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
+/*
+
+	this file must stay mostly similar to pubsub/pool_queue.go
+
+*/
+
 type subscriber struct {
 	pubsub    pubsub.Subscriber
-	receivers *orderedMap[any]
+	receivers *omap.OrderedMap[any]
 
 	_dirty  atomic.Bool
 	_cached []signals.Receiver[any]
 }
 
 func (s *subscriber) _undirtify() {
-	s._cached = slices.Clone(s.receivers.list())
+	s._cached = slices.Clone(s.receivers.List())
 }
 
 func (s *subscriber) checkDirty() {
@@ -28,7 +35,7 @@ func (s *subscriber) checkDirty() {
 }
 
 func (s *subscriber) add(r signals.Receiver[any]) (isNew bool) {
-	isNew = s.receivers.set(r.ID(), r)
+	isNew = s.receivers.Set(r.ID(), r)
 	if isNew {
 		s._dirty.Store(true)
 	}
@@ -36,7 +43,7 @@ func (s *subscriber) add(r signals.Receiver[any]) (isNew bool) {
 }
 
 func (s *subscriber) del(r interface{ ID() string }) (deleted bool) {
-	deleted = s.receivers.delete(r.ID())
+	deleted = s.receivers.Delete(r.ID())
 	if deleted {
 		s._dirty.Store(true)
 	}
@@ -44,8 +51,8 @@ func (s *subscriber) del(r interface{ ID() string }) (deleted bool) {
 }
 
 func (s *subscriber) clear() {
-	s._dirty.Store(s.receivers != nil && s.receivers.length() > 0)
-	s.receivers.clear()
+	s._dirty.Store(s.receivers != nil && s.receivers.Length() > 0)
+	s.receivers.Clear()
 }
 
 func (s *subscriber) check(sigName string) error {
@@ -53,7 +60,7 @@ func (s *subscriber) check(sigName string) error {
 		return nil
 	}
 
-	if s.receivers != nil && s.receivers.length() > 0 {
+	if s.receivers != nil && s.receivers.Length() > 0 {
 		return nil
 	}
 

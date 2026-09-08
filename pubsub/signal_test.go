@@ -129,11 +129,11 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 		t.Logf("Value: %q", val)
 		t.Logf("Message: %v", msg)
 
-		if msg.Sender != PoolFromContext[string](ctx).ID() {
+		if msg.Sender != PoolFromContext[Pool[string]](ctx).ID() {
 			t.Errorf(
 				"ID should match! %s != %s",
 				msg.Sender,
-				PoolFromContext[string](ctx).ID(),
+				PoolFromContext[Pool[string]](ctx).ID(),
 			)
 		}
 
@@ -186,11 +186,11 @@ func TestSignalClear(t *testing.T) {
 		t.Errorf("Clear error: %v", err)
 	}
 
-	pool.mu.RLock()
+	pool.Mu.RLock()
 	sub := pool.subscribers["test_topic"]
-	pool.mu.RUnlock()
+	pool.Mu.RUnlock()
 
-	if sub != nil && sub.receivers.length() > 0 {
-		t.Errorf("expected 0 receivers after clear, got %d", sub.receivers.length())
+	if sub != nil && sub.receivers.Length() > 0 {
+		t.Errorf("expected 0 receivers after clear, got %d", sub.receivers.Length())
 	}
 }

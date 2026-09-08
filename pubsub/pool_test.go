@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/internal/omap"
 )
 
 func TestPoolInternalState(t *testing.T) {
@@ -14,7 +15,7 @@ func TestPoolInternalState(t *testing.T) {
 	customErrFn := func(p *Pool[string], err error) {
 	}
 
-	pool := New(client, PoolOnError(customErrFn))
+	pool := New[string](client, PoolOnError(customErrFn))
 
 	// Initial State Validation
 	t.Run("InitialState", func(t *testing.T) {
@@ -27,10 +28,10 @@ func TestPoolInternalState(t *testing.T) {
 		if pool.subscribers == nil || len(pool.subscribers) != 0 {
 			t.Errorf("expected empty subscribers map")
 		}
-		if pool.encoder == nil {
+		if pool.Encoder == nil {
 			t.Errorf("expected encoder to be set")
 		}
-		if pool.closed.Load() {
+		if pool.Closed.Load() {
 			t.Errorf("expected closed to be false")
 		}
 	})
@@ -42,9 +43,9 @@ func TestPoolInternalState(t *testing.T) {
 			t.Errorf("expected signal name test_topic")
 		}
 
-		pool.mu.RLock()
+		pool.Mu.RLock()
 		internalSig, ok := pool.signals["test_topic"]
-		pool.mu.RUnlock()
+		pool.Mu.RUnlock()
 
 		if !ok || internalSig != sig {
 			t.Errorf("expected signal to be stored in pool signals map")
@@ -62,18 +63,18 @@ func TestPoolInternalState(t *testing.T) {
 			t.Fatalf("Listen error: %v", err)
 		}
 
-		pool.mu.RLock()
+		pool.Mu.RLock()
 		sub, ok := pool.subscribers["test_topic"]
-		pool.mu.RUnlock()
+		pool.Mu.RUnlock()
 
 		if !ok || sub == nil {
 			t.Fatalf("expected subscriber to be created")
 		}
-		if sub.receivers.length() != 1 {
+		if sub.receivers.Length() != 1 {
 			t.Errorf("expected 1 receiver in subscriber queue")
 		}
 
-		val, found := sub.receivers.get(recv.ID())
+		val, found := sub.receivers.Get(recv.ID())
 		if !found || val != recv {
 			t.Errorf("expected receiver to be in subscriber queue")
 		}
@@ -81,14 +82,14 @@ func TestPoolInternalState(t *testing.T) {
 
 	// Test Pool Close
 	t.Run("Close", func(t *testing.T) {
-		pool.exit = make(chan struct{})
+		pool.Exit = make(chan struct{})
 		pool.Close()
 
-		if !pool.closed.Load() {
+		if !pool.Closed.Load() {
 			t.Errorf("expected closed flag to be true")
 		}
 
-		if pool.exit != nil {
+		if pool.Exit != nil {
 			t.Errorf("expected exit channel to be nil")
 		}
 	})
@@ -151,7 +152,7 @@ func TestPoolWaitLoop(t *testing.T) {
 
 func TestPoolLoop(t *testing.T) {
 	client := NewMockPubSub(true)
-	pool := New(client, PoolTickTime[string](10*time.Millisecond))
+	pool := New[string](client, PoolTickTime(10*time.Millisecond))
 
 	sig := pool.NewSignal(context.Background(), "test_topic")
 
@@ -198,9 +199,9 @@ func TestPool_SubscriberCache(t *testing.T) {
 		return nil
 	})
 
-	pool.mu.RLock()
+	pool.Mu.RLock()
 	sub := pool.subscribers["test_topic"]
-	pool.mu.RUnlock()
+	pool.Mu.RUnlock()
 
 	// Initial dirty flag should be true after add
 	if !sub._dirty.Load() {
@@ -230,7 +231,7 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	client := NewMockPubSub(true)
 
 	var lastErr error
-	pool := New(client, PoolOnError(func(p *Pool[string], err error) {
+	pool := New[string](client, PoolOnError(func(p *Pool[string], err error) {
 		lastErr = err
 	}))
 
@@ -247,15 +248,15 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	mockSub.push([]byte("{ invalid json }"), "test_topic")
 
 	// Manually inject subscriber into pool
-	pool.mu.Lock()
-	q := newOrderedMap[string](0)
-	q.set("dummy", &receiver[string]{id: "dummy"})
+	pool.Mu.Lock()
+	q := omap.NewOrderedMap[string](0)
+	q.Set("dummy", &receiver[string]{id: "dummy"})
 
 	pool.subscribers["test_topic"] = &subscriber[string]{
 		pubsub:    mockSub,
 		receivers: q,
 	}
-	pool.mu.Unlock()
+	pool.Mu.Unlock()
 
 	// doWork will pop from TryReceive, try to decode, and fail
 	pool.doWork(context.Background())

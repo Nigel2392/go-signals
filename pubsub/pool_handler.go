@@ -12,8 +12,14 @@ type Handler[T any] struct {
 	Receivers []signals.Receiver[T]
 	Message   *Message
 
-	pool *Pool[T]
+	basePool *BasePool
 	// process sync.Once
+}
+
+func NewHandler[T any](basePool *BasePool) *Handler[T] {
+	return new(Handler[T]{
+		basePool: basePool,
+	})
 }
 
 // Execute the receivers with the provided value
@@ -25,8 +31,8 @@ func (r *Handler[T]) Process(ctx context.Context) error {
 	// var mu sync.Mutex
 	// r.process.Do(func() {
 
-	ctx = contextWithMessage(ctx, r.Message)
-	r.pool.processReceivers(ctx, r.Signal, r.Receivers, r.Value, func(err error) {
+	ctx = ContextWithMessage(ctx, r.Message)
+	r.basePool.processReceivers(ctx, r.Signal, r.Receivers, r.Value, func(err error) {
 		errs = append(errs, err)
 	})
 

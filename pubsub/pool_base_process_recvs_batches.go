@@ -1,7 +1,7 @@
 //go:build batches
 // +build batches
 
-package pubsub2
+package pubsub
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/Nigel2392/go-signals"
 )
 
-func (r *Pool) processReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(error)) {
+func (r *BasePool) processReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(error)) {
 
 	ctx = contextWithPool(ctx, r)
 
@@ -31,11 +31,11 @@ func (r *Pool) processReceivers[T any](ctx context.Context, sig signals.Signal[T
 	wg.Wait()
 }
 
-func (r *Pool) processBatch[T any](ctx context.Context, wg *sync.WaitGroup, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(error)) {
+func (r *BasePool) processBatch[T any](ctx context.Context, wg *sync.WaitGroup, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(error)) {
 	defer wg.Done()
 
 	for _, receiver := range receivers {
-		if r.closed.Load() || ctx.Err() != nil {
+		if r.Closed.Load() || ctx.Err() != nil {
 			return
 		}
 

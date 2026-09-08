@@ -104,7 +104,7 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub2.PoolOnError(func(p *pubsub2.Pool, err error) {
+		pubsub.PoolOnError(func(p *pubsub2.Pool, err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
 		}),
@@ -112,8 +112,8 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 
 	var incr = new(atomic.Int64)
 
-	var signal = pool.NewSignal[string](b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+	var signal = pool.NewSignal[*string](b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
 		incr.Add(1)
 		return nil
 	})
@@ -137,7 +137,7 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 	for b.Loop() {
 		wg.Add(1)
 
-		err := signal.Send(b.Context(), "This is a signal message!")
+		err := signal.Send(b.Context(), new("This is a signal message!"))
 		if err != nil {
 			b.Error(err)
 		}
@@ -224,7 +224,7 @@ func TestPoolSend(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime[MyType](time.Millisecond*10),
+		pubsub.PoolTickTime(time.Millisecond*10),
 		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
@@ -290,11 +290,11 @@ func TestPoolSend(t *testing.T) {
 			t.Errorf("Message channel is not %q: %q", "test-pool-channel-1", msg.Channel)
 		}
 
-		if msg.Sender != pubsub.PoolFromContext[MyType](ctx).ID() {
+		if msg.Sender != pubsub.PoolFromContext[pubsub.Pool[MyType]](ctx).ID() {
 			t.Errorf(
 				"ID should match! %s != %s",
 				msg.Sender,
-				pubsub.PoolFromContext[MyType](ctx).ID(),
+				pubsub.PoolFromContext[pubsub.Pool[MyType]](ctx).ID(),
 			)
 		}
 
@@ -347,7 +347,7 @@ func TestMultiplePoolsSend(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime[MyType](time.Millisecond),
+		pubsub.PoolTickTime(time.Millisecond),
 		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
@@ -396,7 +396,7 @@ func TestMultiplePoolsSend(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime[MyType](time.Millisecond),
+		pubsub.PoolTickTime(time.Millisecond),
 		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
@@ -424,11 +424,11 @@ func TestMultiplePoolsSend(t *testing.T) {
 			t.Errorf("Message channel is not %q: %q", "test-pool-channel-1", msg.Channel)
 		}
 
-		if msg.Sender == pubsub.PoolFromContext[MyType](ctx).ID() {
+		if msg.Sender == pubsub.PoolFromContext[pubsub.Pool[MyType]](ctx).ID() {
 			t.Errorf(
 				"ID should not match! %s == %s",
 				msg.Sender,
-				pubsub.PoolFromContext[MyType](ctx).ID(),
+				pubsub.PoolFromContext[pubsub.Pool[MyType]](ctx).ID(),
 			)
 		}
 
@@ -483,8 +483,8 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub2.PoolTickTime(time.Millisecond),
-		pubsub2.PoolOnError(func(p *pubsub2.Pool, err error) {
+		pubsub.PoolTickTime(time.Millisecond),
+		pubsub.PoolOnError(func(p *pubsub2.Pool, err error) {
 			errCh <- err
 		}),
 	)
@@ -532,8 +532,8 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub2.PoolTickTime(time.Millisecond),
-		pubsub2.PoolOnError(func(p *pubsub2.Pool, err error) {
+		pubsub.PoolTickTime(time.Millisecond),
+		pubsub.PoolOnError(func(p *pubsub2.Pool, err error) {
 			errCh <- err
 		}),
 	)
@@ -560,11 +560,11 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 			t.Errorf("Message channel is not %q: %q", "test-pool-channel-1", msg.Channel)
 		}
 
-		if msg.Sender == pubsub2.PoolFromContext(ctx).ID() {
+		if msg.Sender == pubsub.PoolFromContext[pubsub2.Pool](ctx).ID() {
 			t.Errorf(
 				"ID should not match! %s == %s",
 				msg.Sender,
-				pubsub2.PoolFromContext(ctx).ID(),
+				pubsub.PoolFromContext[pubsub2.Pool](ctx).ID(),
 			)
 		}
 
@@ -619,7 +619,7 @@ func TestPoolContextErr(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime[MyType](time.Millisecond*10),
+		pubsub.PoolTickTime(time.Millisecond*10),
 		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
@@ -692,7 +692,7 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime[string](time.Millisecond*10),
+		pubsub.PoolTickTime(time.Millisecond*10),
 		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
@@ -757,11 +757,11 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 		errCh = make(chan error, 10)
 	)
 
-	pool := pubsub.New(
+	pool := pubsub.New[string](
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime[string](time.Microsecond*200), // 0.2ms
+		pubsub.PoolTickTime(time.Microsecond*200), // 0.2ms
 		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
@@ -828,11 +828,11 @@ func TestSendAsync(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	pool := pubsub.New(
+	pool := pubsub.New[string](
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime[string](time.Millisecond*10),
+		pubsub.PoolTickTime(time.Millisecond*10),
 		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
