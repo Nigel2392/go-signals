@@ -1,5 +1,8 @@
 # Go-Signals
 
+[![codecov](https://codecov.io/github/Nigel2392/go-signals/graph/badge.svg?token=YXRMR8T91W)](https://codecov.io/github/Nigel2392/go-signals)
+[![Build Framework](https://img.shields.io/github/actions/workflow/status/Nigel2392/go-signals/race_tests.yml?branch=main)]([https://github.com/Nigel2392/go-signals/actions](https://github.com/Nigel2392/go-signals))
+
 A type-safe package for sending signals application-wide in Go.
 
 Signals are a way to communicate between different parts of your application.
