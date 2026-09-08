@@ -43,7 +43,7 @@ var _ Signal[any] = (*signal[any])(nil)
 type signal[T any] struct {
 	name      string        // Name of the signal.
 	receivers []Receiver[T] // List of receivers.
-	mu        sync.Mutex    // Mutex for locking the signal.
+	mu        sync.RWMutex  // Mutex for locking the signal.
 
 	// caching to avoid locking mutexes during Send
 	dirty  atomic.Bool
@@ -55,17 +55,17 @@ func New[T any](name string) Signal[T] {
 	return &signal[T]{
 		name:      name,
 		receivers: make([]Receiver[T], 0),
-		mu:        sync.Mutex{},
+		mu:        sync.RWMutex{},
 	}
 }
 
 func (s *signal[T]) getReceivers() []Receiver[T] {
 
 	if s.dirty.Load() {
-		s.mu.Lock()
+		s.mu.RLock()
 		s.cached = slices.Clone(s.receivers)
 		s.dirty.Store(false)
-		s.mu.Unlock()
+		s.mu.RUnlock()
 	}
 
 	return s.cached

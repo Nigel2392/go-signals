@@ -9,20 +9,20 @@ import "context"
 // New signals will be created and added to the pool if they do not exist.
 //
 // If you need a separate pool of signals, use NewPool() to create a new one!
-var defaultSignalPool = NewPool[any]()
+var defaultSignalPool = NewGPool()
 
 // This will send the signal to all receivers that are connected to the signal.
 //
 // Returns an error, if any of the receivers return an error.
-func Send(ctx context.Context, name string, value any) error {
+func Send[T any](ctx context.Context, name string, value T) error {
 	return defaultSignalPool.Send(ctx, name, value)
 }
 
 // Get a signal by name.
 //
 // Create a new one if it does not exist.
-func Get(name string) Signal[any] {
-	return defaultSignalPool.Get(name)
+func Get[T any](name string) Signal[T] {
+	return defaultSignalPool.Get[T](name)
 }
 
 //	Register a receiver to a signal.
@@ -32,8 +32,8 @@ func Get(name string) Signal[any] {
 //	If the signal does not exist, it will be created.
 //
 //	This is a shorthand.
-func Listen(ctx context.Context, name string, r func(context.Context, Signal[any], any) error) {
-	defaultSignalPool.Listen(ctx, name, r)
+func Listen[T any](ctx context.Context, name string, r func(context.Context, Signal[T], T) error) (Receiver[T], error) {
+	return defaultSignalPool.Listen(ctx, name, r)
 }
 
 type batchSizeContextKey struct{}

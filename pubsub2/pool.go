@@ -330,7 +330,10 @@ func (r *Pool) doWork(ctx context.Context) (stop bool) {
 			}
 
 			newCtx := pubsub.ContextWithMessage(ctx, msg)
-			go (*pubsub.ProcessorBasePool)(&r.BasePool).ProcessReceivers(newCtx, sig, sub._cached, val, r.callErr)
+
+			// cast to [pubsub.ProcessorBasePool] to gain access to unexported method
+			go (*pubsub.ProcessorBasePool)(&r.BasePool).
+				ProcessReceivers(newCtx, sig, sub._cached, val, r.callErr)
 		}
 	}
 
