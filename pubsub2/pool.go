@@ -51,10 +51,6 @@ func New(pub pubsub.PubSub, opts ...pubsub.PoolOption) *Pool {
 		pool.onErr = defaultPoolError
 	}
 
-	if b, ok := pub.(pubsub.PubSubBinder); ok {
-		b.BindChannel(pool)
-	}
-
 	return pool
 }
 

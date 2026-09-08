@@ -65,7 +65,7 @@ type BasePool struct {
 	Closed atomic.Bool
 	Exit   chan struct{}
 
-	backref any
+	backref ChannelBinder
 }
 
 func NewBasePool(pubsub PubSub) BasePool {
@@ -75,7 +75,7 @@ func NewBasePool(pubsub PubSub) BasePool {
 	}
 }
 
-func (r *BasePool) WithReference(ref any) {
+func (r *BasePool) WithReference(ref ChannelBinder) {
 	r.backref = ref
 }
 
@@ -90,6 +90,10 @@ func (r *BasePool) Setup() {
 
 	if (r.Inst == uuid.UUID{}) {
 		r.Inst = uuid.New()
+	}
+
+	if b, ok := r.client.(PubSubBinder); ok {
+		b.BindChannel(r.backref)
 	}
 }
 

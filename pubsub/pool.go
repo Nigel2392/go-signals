@@ -5,11 +5,9 @@ import (
 	"iter"
 	"log"
 	"time"
-	"uuid"
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/internal/omap"
-	"github.com/Nigel2392/go-signals/pubsub/encoder"
 )
 
 var (
@@ -49,24 +47,10 @@ func New[T any](pubsub PubSub, opts ...PoolOption) *Pool[T] {
 		opt((*Pool[T])(pool))
 	}
 
-	if pool.Encoder == nil {
-		pool.Encoder = encoder.NewJSONEncoder()
-	}
-
-	if pool.TickTime == 0 {
-		pool.TickTime = time.Millisecond / 2
-	}
+	pool.BasePool.Setup()
 
 	if pool.onErr == nil {
 		pool.onErr = defaultPoolError
-	}
-
-	if (pool.Inst == uuid.UUID{}) {
-		pool.Inst = uuid.New()
-	}
-
-	if b, ok := pubsub.(PubSubBinder); ok {
-		b.BindChannel(pool)
 	}
 
 	return pool
