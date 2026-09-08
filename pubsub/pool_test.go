@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/Nigel2392/go-signals"
-	"github.com/elliotchance/orderedmap/v2"
 )
 
 func TestPoolInternalState(t *testing.T) {
@@ -70,11 +69,11 @@ func TestPoolInternalState(t *testing.T) {
 		if !ok || sub == nil {
 			t.Fatalf("expected subscriber to be created")
 		}
-		if sub.receivers.Len() != 1 {
+		if sub.receivers.length() != 1 {
 			t.Errorf("expected 1 receiver in subscriber queue")
 		}
 
-		val, found := sub.receivers.Get(recv.ID())
+		val, found := sub.receivers.get(recv.ID())
 		if !found || val != recv {
 			t.Errorf("expected receiver to be in subscriber queue")
 		}
@@ -249,8 +248,8 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 
 	// Manually inject subscriber into pool
 	pool.mu.Lock()
-	q := orderedmap.NewOrderedMap[string, signals.Receiver[string]]()
-	q.Set("dummy", &receiver[string]{id: "dummy"})
+	q := newOrderedMap[string](0)
+	q.set("dummy", &receiver[string]{id: "dummy"})
 
 	pool.subscribers["test_topic"] = &subscriber[string]{
 		pubsub:    mockSub,

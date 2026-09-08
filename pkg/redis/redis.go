@@ -20,9 +20,9 @@ type MinimalClient interface {
 // PubSub creates a new Redis PubSub client.
 // If async is false, it allocates a channel to bind to the Pool's WaitLoop.
 func PubSub(async bool, c any) pubsub.PubSub {
-	var ch chan *pubsub.Message
+	var ch chan pubsub.Message
 	if !async {
-		ch = make(chan *pubsub.Message)
+		ch = make(chan pubsub.Message)
 	}
 
 	rps := &redisPubSub{
@@ -51,7 +51,7 @@ type redisPubSub struct {
 	_clientFn   func() MinimalClient
 	_client     MinimalClient
 	channelOpts []redis.ChannelOption
-	publish     chan *pubsub.Message
+	publish     chan pubsub.Message
 }
 
 func (s *redisPubSub) client() MinimalClient {
@@ -111,11 +111,11 @@ type redisSubscriber struct {
 	ch     <-chan *redis.Message
 }
 
-func (s *redisSubscriber) forward(out chan<- *pubsub.Message) {
+func (s *redisSubscriber) forward(out chan<- pubsub.Message) {
 	// Blocks until a message arrives.
 	// Automatically breaks and exits when r.pubsub.Close() is called.
 	for msg := range s.ch {
-		out <- &pubsub.Message{
+		out <- pubsub.Message{
 			Channel: msg.Channel,
 
 			// payload is an encoded pubsub.Message!!!

@@ -15,7 +15,6 @@ func (r *Pool[T]) processReceivers(ctx context.Context, sig signals.Signal[T], r
 
 receiverLoop:
 	for _, receiver := range receivers {
-
 		if r.closed.Load() || ctx.Err() != nil {
 			return
 		}

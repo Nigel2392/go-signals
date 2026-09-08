@@ -11,9 +11,9 @@ var _ pubsub.PubSubBinder = (*memoryPubSub)(nil)
 var _ pubsub.Subscriber = (*memorySubscriber)(nil)
 
 func PubSub(async bool) pubsub.PubSub {
-	var ch chan *pubsub.Message
+	var ch chan pubsub.Message
 	if !async {
-		ch = make(chan *pubsub.Message)
+		ch = make(chan pubsub.Message)
 	}
 
 	return &memoryPubSub{
@@ -23,7 +23,7 @@ func PubSub(async bool) pubsub.PubSub {
 }
 
 type memoryPubSub struct {
-	publish     chan *pubsub.Message
+	publish     chan pubsub.Message
 	subscribers map[string]*memorySubscriber
 }
 
@@ -35,7 +35,7 @@ func (s *memoryPubSub) BindChannel(b pubsub.ChannelBinder) {
 
 func (s *memoryPubSub) Publish(ctx context.Context, topic string, data []byte) error {
 	if s.publish != nil {
-		s.publish <- &pubsub.Message{
+		s.publish <- pubsub.Message{
 			Channel: topic,
 			Data:    data,
 		}
@@ -51,7 +51,7 @@ func (s *memoryPubSub) Publish(ctx context.Context, topic string, data []byte) e
 		return nil
 	}
 
-	sub.ch <- &pubsub.Message{
+	sub.ch <- pubsub.Message{
 		Channel: topic,
 
 		// data is an encoded pubsub.Message!!!
@@ -67,7 +67,7 @@ func (s *memoryPubSub) Subscribe(ctx context.Context, topic string) (pubsub.Subs
 			ch: s.publish,
 		}
 		if sub.ch == nil {
-			sub.ch = make(chan *pubsub.Message, 100)
+			sub.ch = make(chan pubsub.Message, 100)
 		}
 		s.subscribers[topic] = sub
 	}
@@ -75,13 +75,13 @@ func (s *memoryPubSub) Subscribe(ctx context.Context, topic string) (pubsub.Subs
 }
 
 type memorySubscriber struct {
-	ch chan *pubsub.Message
+	ch chan pubsub.Message
 }
 
 func (s *memorySubscriber) TryReceive() ([]byte, bool) {
 	select {
 	case msg, ok := <-s.ch:
-		if !ok || msg == nil {
+		if !ok {
 			return nil, false
 		}
 		return msg.Data, true

@@ -7,13 +7,13 @@ import (
 
 type MockSubscriber struct {
 	mu     sync.Mutex
-	ch     chan *Message
+	ch     chan Message
 	closed bool
 }
 
-func NewMockSubscriber(ch chan *Message) *MockSubscriber {
+func NewMockSubscriber(ch chan Message) *MockSubscriber {
 	if ch == nil {
-		ch = make(chan *Message, 100)
+		ch = make(chan Message, 100)
 	}
 	return &MockSubscriber{
 		ch: ch,
@@ -30,7 +30,7 @@ func (m *MockSubscriber) Close() error {
 func (m *MockSubscriber) TryReceive() ([]byte, bool) {
 	select {
 	case msg, ok := <-m.ch:
-		if !ok || msg == nil {
+		if !ok {
 			return nil, false
 		}
 		return msg.Data, true
@@ -40,7 +40,7 @@ func (m *MockSubscriber) TryReceive() ([]byte, bool) {
 }
 
 func (m *MockSubscriber) push(data []byte, topic string) {
-	m.ch <- &Message{
+	m.ch <- Message{
 		Channel: topic,
 		Data:    data,
 	}
@@ -48,16 +48,16 @@ func (m *MockSubscriber) push(data []byte, topic string) {
 
 type MockPubSub struct {
 	mu          sync.Mutex
-	publish     chan *Message
+	publish     chan Message
 	subscribers map[string][]*MockSubscriber
 	PublishErr  error
 	SubErr      error
 }
 
 func NewMockPubSub(async bool) *MockPubSub {
-	var ch chan *Message
+	var ch chan Message
 	if !async {
-		ch = make(chan *Message, 100)
+		ch = make(chan Message, 100)
 	}
 
 	return &MockPubSub{
@@ -72,7 +72,7 @@ func (m *MockPubSub) Publish(ctx context.Context, topic string, data []byte) err
 	}
 
 	if m.publish != nil {
-		m.publish <- &Message{
+		m.publish <- Message{
 			Channel: topic,
 			Data:    data,
 		}

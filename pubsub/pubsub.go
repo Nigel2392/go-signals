@@ -114,6 +114,6 @@ type Message struct {
 // allow for the blocking WaitLoop function.
 type ChannelBinder interface {
 	Client() PubSub
-	Channel() chan *Message
-	SetChannel(ch chan *Message)
+	Channel() chan Message
+	SetChannel(ch chan Message)
 }

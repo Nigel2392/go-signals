@@ -13,13 +13,18 @@ import (
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
-	"github.com/elliotchance/orderedmap/v2"
 )
 
 var _ PubSubPool[any] = (*Pool[any])(nil)
 
+type RWLocker interface {
+	sync.Locker
+	RLock()
+	RUnlock()
+}
+
 type Pool[T any] struct {
-	mu sync.RWMutex
+	mu RWLocker
 
 	// inst provides the instance ID for this pool object.
 	//
@@ -59,7 +64,7 @@ type Pool[T any] struct {
 	// on the upside, it does not rely on the ticker to retrieve values.
 	// this means that any values sent from a signal propagate as
 	// quickly as possible, only being limited by the scheduler.
-	data chan *Message
+	data chan Message
 
 	// managing the loop
 	tickTime time.Duration // only used when in async/loop mode
@@ -76,7 +81,7 @@ func defaultPoolError[T any](p *Pool[T], err error) {
 
 func New[T any](pubsub PubSub, opts ...PoolOption[T]) *Pool[T] {
 	pool := &Pool[T]{
-		mu:          sync.RWMutex{},
+		mu:          &sync.RWMutex{},
 		client:      pubsub,
 		signals:     make(map[string]*signal[T]),
 		subscribers: make(map[string]*subscriber[T]),
@@ -110,7 +115,7 @@ func New[T any](pubsub PubSub, opts ...PoolOption[T]) *Pool[T] {
 }
 
 func GoNew[T any](ctx context.Context, pubsub PubSub, opts ...PoolOption[T]) *Pool[T] {
-	var pool = New[T](pubsub, opts...)
+	var pool = New(pubsub, opts...)
 	if pool.data == nil {
 		go pool.Loop(ctx)
 		return pool
@@ -138,11 +143,11 @@ func (r *Pool[T]) Client() PubSub {
 	return r.client
 }
 
-func (r *Pool[T]) SetChannel(ch chan *Message) {
+func (r *Pool[T]) SetChannel(ch chan Message) {
 	r.data = ch
 }
 
-func (r *Pool[T]) Channel() chan *Message {
+func (r *Pool[T]) Channel() chan Message {
 	return r.data
 }
 
@@ -225,23 +230,30 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[*Handler[T], error] {
 		for payload := range r.data {
 
 			// retrieve subscriber object and signal
-			r.mu.Lock()
+			r.mu.RLock()
 			sub, ok := r.subscribers[payload.Channel]
 			if !ok {
-				r.mu.Unlock()
+				r.mu.RUnlock()
 				continue
 			}
 
 			sig, ok := r.signals[payload.Channel]
 			if !ok {
-				r.mu.Unlock()
+				r.mu.RUnlock()
 				continue
 			}
 
+			r.mu.RUnlock()
+
 			// rebuild subscriber cache if required
 			// allows for better concurrency
-			sub.checkDirty()
-			r.mu.Unlock()
+			if sub._dirty.Load() {
+				// rlock is sufficient as the _cached slice will only be rebuilt synchronously
+				r.mu.Lock()
+				sub._undirtify()
+				r.mu.Unlock()
+				sub._dirty.Store(false)
+			}
 
 			// see if we should exit the loop
 			if r.closed.Load() {
@@ -323,20 +335,43 @@ func (r *Pool[T]) callErr(err error) {
 
 func (r *Pool[T]) doWork(ctx context.Context) (stop bool) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 
-	for pubName, sub := range r.subscribers {
+	keys := make([]string, 0, len(r.subscribers))
+	for k := range r.subscribers {
+		keys = append(keys, k)
+	}
 
-		if sub.receivers == nil || sub.receivers.Len() == 0 {
-			continue
-		}
+	r.mu.RUnlock()
 
-		sig, ok := r.signals[pubName]
+	for _, key := range keys {
+		r.mu.RLock()
+		sub, ok := r.subscribers[key]
 		if !ok {
+			r.mu.RUnlock()
 			continue
 		}
 
-		sub.checkDirty()
+		if sub.receivers == nil || sub.receivers.length() == 0 {
+			continue
+		}
+
+		sig, ok := r.signals[key]
+		if !ok {
+			r.mu.RUnlock()
+			continue
+		}
+
+		r.mu.RUnlock()
+
+		// rebuild subscriber cache if required
+		// allows for better concurrency
+		if sub._dirty.Load() {
+			// rlock is sufficient as the sub._cached slice will only be rebuilt synchronously
+			r.mu.Lock()
+			sub._undirtify()
+			r.mu.Unlock()
+			sub._dirty.Store(false)
+		}
 
 	drainLoop:
 		for {
@@ -382,7 +417,7 @@ func (r *Pool[T]) newSub(signal string, createIfNotExists bool) *subscriber[T] {
 	}
 
 	s = &subscriber[T]{
-		receivers: orderedmap.NewOrderedMap[string, signals.Receiver[T]](),
+		receivers: newOrderedMap[T](0),
 	}
 	r.subscribers[signal] = s
 	return s
@@ -415,15 +450,16 @@ func (r *Pool[T]) clear(ctx context.Context, signal string) error {
 	defer r.mu.Unlock()
 
 	sub := r.newSub(signal, false)
-	if sub == nil || sub.receivers == nil || sub.receivers.Len() == 0 {
+	if sub == nil || sub.receivers == nil || sub.receivers.length() == 0 {
 		return nil
 	}
 
-	for id, recv := range sub.receivers.Iterator() {
+	for idx, recv := range sub.receivers.list() {
+		id := recv.ID()
 		err := recv.Disconnect(ctx)
 		if err != nil {
 			return signals.ErrReceiver.WithCause(err).Wrapf(
-				"receiver %q", id,
+				"[%d] receiver %q", idx, id,
 			)
 		}
 	}
@@ -444,7 +480,7 @@ func (r *Pool[T]) disconnect(ctx context.Context, sig *signal[T], recv signals.R
 	defer r.mu.Unlock()
 
 	sub := r.newSub(sig.name, false)
-	if sub == nil || sub.receivers == nil || sub.receivers.Len() == 0 {
+	if sub == nil || sub.receivers == nil || sub.receivers.length() == 0 {
 		return nil
 	}
 
