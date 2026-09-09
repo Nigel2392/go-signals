@@ -5,6 +5,7 @@ package signals
 
 import (
 	"context"
+	"runtime"
 	"slices"
 	"sync"
 	"unsafe"
@@ -22,19 +23,21 @@ func asyncReceive[T any](ctx context.Context, s Signal[T], recvs []Receiver[T], 
 
 	var batchSize = BatchSize(ctx)
 	var batches = (len(recvs) + batchSize - 1) / batchSize
-	var errChan chan error = make(chan error, batchSize)
+	var errChan chan error = make(chan error, min(batches, 50))
 	go func() {
 		defer close(errChan)
 		var wg = new(sync.WaitGroup)
 		var wgPtr = (*sync.WaitGroup)(noescape(unsafe.Pointer(wg)))
 
-		wg.Add(batches)
+		wgPtr.Add(batches)
 
 		for batch := range slices.Chunk(recvs, batchSize) {
 			go processBatch(ctx, wgPtr, errChan, s, batch, value)
 		}
 
-		wg.Wait()
+		wgPtr.Wait()
+
+		runtime.KeepAlive(wg)
 	}()
 
 	return errChan
@@ -48,8 +51,8 @@ func noescape(p unsafe.Pointer) unsafe.Pointer {
 
 func processBatch[T any](ctx context.Context, wg *sync.WaitGroup, errChan chan error, signal Signal[T], list []Receiver[T], value T) {
 	defer wg.Done()
-	var errs []error
 
+	var errs []error
 	for _, receiver := range list {
 		err := receiver.Receive(ctx, signal, value)
 		if err != nil {

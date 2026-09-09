@@ -41,6 +41,8 @@ func (s *OrderedMap[V]) checkdeleted() {
 		}
 
 		if _, ok := del[idx]; ok {
+			// shouldn't be hit because of the above check
+			// values get set to their zero values in [OrderedMap.Delete]
 			continue
 		}
 
@@ -83,8 +85,9 @@ func (s *OrderedMap[V]) Delete(key string) bool {
 		return false
 	}
 
+	var zero V
 	delete(s.index, key)
-	s.entries[idx] = *new(V)
+	s.entries[idx] = zero
 	s.deleted = append(s.deleted, idx)
 	return true
 }
