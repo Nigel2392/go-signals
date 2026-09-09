@@ -844,7 +844,7 @@ func TestSendAsync(t *testing.T) {
 
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
 
-	var errChan chan error = signal.SendAsync(t.Context(), "This is a signal message!")
+	var errChan <-chan error = signals.SendAsync(t.Context(), signal, "This is a signal message!")
 	var errs []error = make([]error, 0)
 	for err := range errChan {
 		if err != nil {

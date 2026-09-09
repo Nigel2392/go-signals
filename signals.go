@@ -3,37 +3,10 @@ package signals
 import (
 	"context"
 	"fmt"
-	"iter"
 	"slices"
 	"sync"
 	"sync/atomic"
 )
-
-// Signal interface.
-//
-// Used for sending messages to receivers.
-type Signal[T any] interface {
-	// Return the name of the signal.
-	Name() string
-
-	// Send a message across the signal's receivers.
-	Send(context.Context, T) error
-
-	// Send a message across the signal's receivers asynchronously.
-	SendAsync(context.Context, T) chan error
-
-	// Connect a list of receivers to the signal.
-	Connect(context.Context, ...Receiver[T]) error
-
-	// Disconnect a list of receivers from a signal.
-	Disconnect(context.Context, ...Receiver[T]) error
-
-	// Listen for a signal.
-	Listen(context.Context, func(context.Context, Signal[T], T) error) (Receiver[T], error)
-
-	// Clear all receivers for the signal.
-	Clear(context.Context) error
-}
 
 var _ Signal[any] = (*signal[any])(nil)
 
@@ -215,19 +188,6 @@ func (s *signal[T]) Transmit(ctx context.Context, value T, recv Receiver[T]) (er
 	return err
 }
 
-func (s *signal[T]) Receivers(ctx context.Context) (int, iter.Seq[Receiver[T]]) {
-	recvs := s.getReceivers()
-
-	// Check if there are any receivers.
-	if len(recvs) == 0 {
-		return 0, nil
-	}
-
-	return len(recvs), func(yield func(Receiver[T]) bool) {
-		for _, v := range recvs {
-			if !yield(v) {
-				return
-			}
-		}
-	}
+func (s *signal[T]) Receivers(ctx context.Context) []Receiver[T] {
+	return s.getReceivers()
 }

@@ -124,7 +124,6 @@ func (r *Pool) NewSignal[T any](_ context.Context, name string) signals.Signal[T
 		// signal creation is meant to be done in the init phase,
 		// although it can be done thoughout program lifecycle.
 		sig = &wrappedSignal[T]{
-			typ:  reflect.TypeFor[T](),
 			name: name,
 			pool: r,
 		}
@@ -132,7 +131,7 @@ func (r *Pool) NewSignal[T any](_ context.Context, name string) signals.Signal[T
 	}
 
 	typedSig := (*signal[T])(sig.(*wrappedSignal[T]))
-	if chkTyp := reflect.TypeFor[T](); chkTyp != typedSig.typ {
+	if chkTyp := reflect.TypeFor[T](); chkTyp != typedSig.MsgType() {
 		panic(fmt.Sprintf("%s does not match required type %s", chkTyp, typedSig.typ))
 	}
 

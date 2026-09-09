@@ -12,20 +12,7 @@ var DEFAULT_BATCH_SIZE = 0
 
 const BATCHES = false
 
-// Send a signal to all receivers asynchronously.
-//
-// Will error if there are no receivers.
-//
-// Returns an error, if any of the receivers return an error.
-//
-// This function is not fully tested, and might produce unexpected results.
-//
-// This function also will not check if there are any receivers.
-//
-// Returns a channel which will contain all errors from the receivers.
-func (s *signal[T]) SendAsync(ctx context.Context, value T) chan error {
-	recvs := s.getReceivers()
-
+func asyncSend[T any](ctx context.Context, s Signal[T], recvs []Receiver[T], value T) chan error {
 	// Check if there are any receivers.
 	if len(recvs) == 0 {
 		return nil

@@ -20,17 +20,6 @@ func (s *signal[T]) Send(ctx context.Context, v T) error {
 	return s.pool.Send(ctx, s.name, v)
 }
 
-func (s *signal[T]) SendAsync(ctx context.Context, v T) chan error {
-	var errChan chan error = make(chan error, 1)
-	go func() {
-		defer close(errChan)
-		if err := s.Send(ctx, v); err != nil {
-			errChan <- err
-		}
-	}()
-	return errChan
-}
-
 func (s *signal[T]) Connect(ctx context.Context, recv ...signals.Receiver[T]) error {
 	for _, r := range recv {
 		err := r.Bind(ctx, s)

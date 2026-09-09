@@ -30,10 +30,6 @@ func (s *wrappedSignal[T]) Send(ctx context.Context, v any) error {
 	return (*signal[T])(s).Send(ctx, v.(T))
 }
 
-func (s *wrappedSignal[T]) SendAsync(ctx context.Context, v any) chan error {
-	return (*signal[T])(s).SendAsync(ctx, v.(T))
-}
-
 func (s *wrappedSignal[T]) Connect(ctx context.Context, recv ...signals.Receiver[any]) error {
 	return (*signal[T])(s).Connect(ctx, unwrapRecvs[T](recv)...)
 }
@@ -67,22 +63,14 @@ func (s *signal[T]) Name() string {
 }
 
 func (s *signal[T]) MsgType() reflect.Type {
+	if s.typ == nil {
+		s.typ = reflect.TypeFor[T]()
+	}
 	return s.typ
 }
 
 func (s *signal[T]) Send(ctx context.Context, v T) error {
 	return s.pool.Send(ctx, s.name, v)
-}
-
-func (s *signal[T]) SendAsync(ctx context.Context, v T) chan error {
-	var errChan chan error = make(chan error, 1)
-	go func() {
-		defer close(errChan)
-		if err := s.Send(ctx, v); err != nil {
-			errChan <- err
-		}
-	}()
-	return errChan
 }
 
 func (s *signal[T]) Connect(ctx context.Context, recv ...signals.Receiver[T]) error {

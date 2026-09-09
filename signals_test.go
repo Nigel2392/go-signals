@@ -150,10 +150,53 @@ func BenchmarkSignalsAsync(b *testing.B) {
 
 			for b.Loop() {
 
-				errCh := signal.SendAsync(ctx, "This is a signal message!")
+				errCh := signals.SendAsync(ctx, signal, "This is a signal message!")
 				for range errCh { // ensures that we actually wait for all receivers to finish
 				}
 
+			}
+
+			if testing.Verbose() {
+				b.Log(incr)
+			}
+
+			if signals.DEFAULT_BATCH_SIZE == 0 && incr != int64(TOTAL_AMOUNT*b.N) {
+				b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr)
+			}
+		})
+	}
+}
+
+func BenchmarkSignalsPkgAsync(b *testing.B) {
+	var batchSizes = []int{
+		10, 50, 100, 250, 500, 1000,
+	}
+
+	if signals.DEFAULT_BATCH_SIZE == 0 {
+		batchSizes = []int{0}
+	}
+
+	for _, size := range batchSizes {
+		b.Run(fmt.Sprintf("Batch%d", size), func(b *testing.B) {
+			b.StopTimer()
+			var signal = pool.Get(strconv.Itoa(int(time.Now().UnixNano())))
+			// dont use atomic int, or check the value for correctness unless DEFAULT_BATCH_SIZE != 0 (i.e. build tag batches = false)
+			var incr int64
+
+			connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+				incr++
+				return nil
+			})
+
+			ctx := signals.ContextWithBatchSize(b.Context(), size)
+
+			b.StartTimer()
+			b.ResetTimer()
+
+			for b.Loop() {
+				errCh := signals.SendAsync(ctx, signal, "This is a signal message!")
+				for range errCh { // ensures that we actually wait for all receivers to finish
+				}
 			}
 
 			if testing.Verbose() {
@@ -185,7 +228,7 @@ func TestSendAsync(t *testing.T) {
 
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
 
-	var errChan chan error = signal.SendAsync(t.Context(), "This is a signal message!")
+	var errChan <-chan error = signals.SendAsync(t.Context(), signal, "This is a signal message!")
 	var errs []error = make([]error, 0)
 	for err := range errChan {
 		if err != nil {

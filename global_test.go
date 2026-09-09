@@ -138,7 +138,7 @@ func BenchmarkGlobalGSignalsAsync(b *testing.B) {
 
 			for b.Loop() {
 
-				errCh := signal.SendAsync(ctx, 1)
+				errCh := signals.SendAsync(ctx, signal, 1)
 				for range errCh { // ensures that we actually wait for all receivers to finish
 				}
 
@@ -173,7 +173,7 @@ func TestGlobalGSendAsync(t *testing.T) {
 
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
 
-	var errChan chan error = signal.SendAsync(t.Context(), "This is a signal message!")
+	var errChan <-chan error = signals.SendAsync(t.Context(), signal, "This is a signal message!")
 	var errs []error = make([]error, 0)
 	for err := range errChan {
 		if err != nil {

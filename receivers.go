@@ -6,26 +6,6 @@ import (
 	"unsafe"
 )
 
-// Receiver interface
-// This will be registered to any signals that it wants to receive.
-// The receiver will be called when the signal is sent.
-type Receiver[T any] interface {
-	// Receives the signal and value from the signal.
-	Receive(context.Context, Signal[T], T) error
-
-	// Disconnects the receiver from the signal.
-	Disconnect(context.Context) error
-
-	// Sets the signal on the receiver instance for later use.
-	Bind(context.Context, Signal[T]) error
-
-	// Retrieves the signal from the receiver instance
-	Signal() Signal[T]
-
-	// Return the unique ID of the receiver.
-	ID() string
-}
-
 // Underlying receiver struct
 type receiver[T any] struct {
 	signal Signal[T]

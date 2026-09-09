@@ -14,9 +14,7 @@ var DEFAULT_BATCH_SIZE = 500
 
 const BATCHES = true
 
-func (s *signal[T]) SendAsync(ctx context.Context, value T) chan error {
-	recvs := s.getReceivers()
-
+func asyncSend[T any](ctx context.Context, s Signal[T], recvs []Receiver[T], value T) chan error {
 	// Check if there are any receivers.
 	if len(recvs) == 0 {
 		return nil

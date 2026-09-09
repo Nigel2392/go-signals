@@ -19,9 +19,6 @@ func (s *gSignal[T]) Name() string {
 func (s *gSignal[T]) Send(ctx context.Context, value any) error {
 	return (*signal[T])(s).Send(ctx, value.(T))
 }
-func (s *gSignal[T]) SendAsync(ctx context.Context, value any) chan error {
-	return (*signal[T])(s).SendAsync(ctx, value.(T))
-}
 func (s *gSignal[T]) Connect(ctx context.Context, receivers ...Receiver[any]) error {
 	panic("this should never be called")
 }

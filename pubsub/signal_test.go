@@ -100,7 +100,7 @@ func TestSignalSendAsync(t *testing.T) {
 
 	sig := pool.NewSignal(context.Background(), "test_topic")
 
-	errChan := sig.SendAsync(context.Background(), "hello async")
+	errChan := signals.SendAsync(context.Background(), sig, "hello async")
 
 	select {
 	case err := <-errChan:
