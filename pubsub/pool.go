@@ -149,14 +149,14 @@ func (r *Pool[T]) NewSignal(_ context.Context, name string) signals.Signal[T] {
 // quickly as possible, only being limited by the scheduler.
 //
 // Using this function is also great for benchmarking, as it isnt reliant on the timer.
-func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[*Handler[T], error] {
+func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[T], error] {
 	if r.Data == nil {
 		panic(signals.ErrUnsupported.Wrap(
 			"cannot call Pool.Handle without having called Pool.SetChannel",
 		))
 	}
 
-	return func(yield func(*Handler[T], error) bool) {
+	return func(yield func(Handler[T], error) bool) {
 		for payload := range r.Data {
 
 			// retrieve subscriber object and signal
@@ -190,14 +190,14 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[*Handler[T], error] {
 			}
 
 			if err := ctx.Err(); err != nil {
-				yield(nil, err)
+				yield(Handler[T]{}, err)
 				return
 			}
 
 			// decode value to send to receivers
 			message, val, err := r.decodeMessage[T](ctx, payload.Data)
 			if err != nil {
-				yield(nil, err)
+				yield(Handler[T]{}, err)
 				return
 			}
 
@@ -278,6 +278,7 @@ func (r *Pool[T]) doWork(ctx context.Context) (stop bool) {
 		}
 
 		if sub.receivers == nil || sub.receivers.Length() == 0 {
+			r.Mu.RUnlock()
 			continue
 		}
 

@@ -39,7 +39,7 @@ type PubSubPool[T any] interface {
 	//
 	// This means that any values sent from a signal propagate as
 	// quickly as possible, only being limited by the scheduler.
-	WaitLoop(ctx context.Context) iter.Seq2[*Handler[T], error]
+	WaitLoop(ctx context.Context) iter.Seq2[Handler[T], error]
 
 	// Send data across the pool for a topic to use.
 	//
