@@ -114,6 +114,10 @@ func (r *Pool) Close() {
 	}
 }
 
+func (r *Pool) Get[T any](ctx context.Context, name string) signals.Signal[T] {
+	return r.NewSignal[T](ctx, name)
+}
+
 func (r *Pool) NewSignal[T any](_ context.Context, name string) signals.Signal[T] {
 	r.Mu.Lock()
 	sig, ok := r.signals[name]
@@ -351,7 +355,7 @@ func (r *Pool) newSub(signal string, createIfNotExists bool) *subscriber {
 	}
 
 	s = &subscriber{
-		receivers: omap.NewOrderedMap[any](0),
+		receivers: omap.NewOrderedMap(0, signals.Receiver[any].ID),
 	}
 	r.subscribers[signal] = s
 	return s

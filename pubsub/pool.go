@@ -343,7 +343,7 @@ func (r *Pool[T]) newSub(signal string, createIfNotExists bool) *subscriber[T] {
 	}
 
 	s = &subscriber[T]{
-		receivers: omap.NewOrderedMap[T](0),
+		receivers: omap.NewOrderedMap(0, signals.Receiver[T].ID),
 	}
 	r.subscribers[signal] = s
 	return s

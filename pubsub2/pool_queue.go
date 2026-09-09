@@ -17,7 +17,7 @@ import (
 
 type subscriber struct {
 	pubsub    pubsub.Subscriber
-	receivers *omap.OrderedMap[any]
+	receivers *omap.OrderedMap[signals.Receiver[any]]
 
 	_dirty  atomic.Bool
 	_cached []signals.Receiver[any]
@@ -35,7 +35,7 @@ func (s *subscriber) checkDirty() {
 }
 
 func (s *subscriber) add(r signals.Receiver[any]) (isNew bool) {
-	isNew = s.receivers.Set(r.ID(), r)
+	isNew = s.receivers.Set(r)
 	if isNew {
 		s._dirty.Store(true)
 	}

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,14 +92,105 @@ func TestMultiple(t *testing.T) {
 	if len(messages) != 4 {
 		t.Errorf("Expected 4 messages total, got %d", len(messages))
 	}
+}
+
+func TestSendRaces(t *testing.T) {
+	GOROUTINES := 1000
+
+	t.Run("Signals", func(t *testing.T) {
+		sig := signals.New[string]("TestSendRaces")
+		incr := atomic.Int64{}
+		wg := sync.WaitGroup{}
+		wg.Add((GOROUTINES * GOROUTINES)) // - (GOROUTINES / 100 * 10))
+
+		//recvs :=
+		connectSignal(GOROUTINES, sig, func(ctx context.Context, signal signals.Signal[string], value string) error {
+			incr.Add(1)
+			wg.Done()
+			return nil
+		})
+
+		for i := 0; i < GOROUTINES; i++ {
+			//if i < (GOROUTINES / 100 * 10) {
+			//	go sig.Disconnect(t.Context(), recvs[i])
+			//}
+
+			go sig.Send(t.Context(), fmt.Sprintf("sigString: %d", i))
+		}
+
+		wg.Wait()
+
+		if incr.Load() != int64(GOROUTINES*GOROUTINES) {
+			t.Fatalf("Expected %d, got %d", GOROUTINES*GOROUTINES, incr.Load())
+		}
+	})
+
+	t.Run("Pool", func(t *testing.T) {
+		sig := pool.Get("TestSendRaces")
+		incr := atomic.Int64{}
+		wg := sync.WaitGroup{}
+		wg.Add((GOROUTINES * GOROUTINES)) // - (GOROUTINES / 100 * 10))
+
+		// recvs :=
+		connectSignal(GOROUTINES, sig, func(ctx context.Context, signal signals.Signal[string], value string) error {
+			incr.Add(1)
+			wg.Done()
+			return nil
+		})
+
+		for i := 0; i < GOROUTINES; i++ {
+			//if i < (GOROUTINES / 100 * 10) {
+			//	go sig.Disconnect(t.Context(), recvs[i])
+			//}
+
+			go pool.Send(t.Context(), "TestSendRaces", fmt.Sprintf("sigString: %d", i))
+		}
+
+		wg.Wait()
+
+		if incr.Load() != int64(GOROUTINES*GOROUTINES) {
+			t.Fatalf("Expected %d, got %d", GOROUTINES*GOROUTINES, incr.Load())
+		}
+	})
+
+	t.Run("gPool", func(t *testing.T) {
+		sig := gPool.Get[string]("TestSendRaces")
+		incr := atomic.Int64{}
+		wg := sync.WaitGroup{}
+		wg.Add((GOROUTINES * GOROUTINES)) // - (GOROUTINES / 100 * 10))
+
+		// recvs :=
+		connectSignal(GOROUTINES, sig, func(ctx context.Context, signal signals.Signal[string], value string) error {
+			incr.Add(1)
+			wg.Done()
+			return nil
+		})
+
+		for i := 0; i < GOROUTINES; i++ {
+			//if i < (GOROUTINES / 100 * 10) {
+			//	go sig.Disconnect(t.Context(), recvs[i])
+			//}
+
+			go gPool.Send(t.Context(), "TestSendRaces", fmt.Sprintf("sigString: %d", i))
+		}
+
+		wg.Wait()
+
+		if incr.Load() != int64(GOROUTINES*GOROUTINES) {
+			t.Fatalf("Expected %d, got %d", GOROUTINES*GOROUTINES, incr.Load())
+		}
+	})
 
 }
 
-func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
+func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) []signals.Receiver[T] {
+	var recvs = make([]signals.Receiver[T], amount)
 	for i := 0; i < amount; i++ {
 		var receiver = signals.NewRecv(receiverFunc)
 		signal.Connect(context.Background(), receiver)
+		recvs[i] = receiver
 	}
+	return recvs
 }
 
 func BenchmarkSignals(b *testing.B) {

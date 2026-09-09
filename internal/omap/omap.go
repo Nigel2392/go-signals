@@ -1,73 +1,80 @@
 package omap
 
-import (
-	"github.com/Nigel2392/go-signals"
-)
-
 // OrderedMap is a lightweight ordered unique collection.
 // It preserves insertion order via a slice and provides
 // O(1) deduplication via a map from key to slice index.
 type OrderedMap[V any] struct {
 	Cap     int
-	Entries []signals.Receiver[V]
-	Deleted []int
+	entries []V
+	deleted []int
 	index   map[string]int
+	key     func(V) string
 }
 
-func NewOrderedMap[V any](Cap int) *OrderedMap[V] {
+func NewOrderedMap[V any](Cap int, getKey func(V) string) *OrderedMap[V] {
 	return &OrderedMap[V]{
 		Cap:     Cap,
-		Entries: make([]signals.Receiver[V], 0, Cap),
-		Deleted: make([]int, 0),
+		entries: make([]V, 0, Cap),
+		deleted: make([]int, 0),
 		index:   make(map[string]int, Cap),
+		key:     getKey,
 	}
 }
 
-func (s *OrderedMap[V]) checkDeleted() {
-	if len(s.Deleted) == 0 {
+func (s *OrderedMap[V]) checkdeleted() {
+	if len(s.deleted) == 0 {
 		return
 	}
 
-	del := make(map[int]struct{}, len(s.Deleted))
-	for _, idx := range s.Deleted {
+	del := make(map[int]struct{}, len(s.deleted))
+	for _, idx := range s.deleted {
 		del[idx] = struct{}{}
 	}
 
-	Entries := make([]signals.Receiver[V], 0, len(s.Entries)-len(s.Deleted))
-	index := make(map[string]int, len(s.Entries)-len(s.Deleted))
-	for idx, r := range s.Entries {
-		if r == nil {
+	var zero V
+	var newIdx int
+	var entries = make([]V, 0, len(s.entries)-len(s.deleted))
+	var index = make(map[string]int, len(s.entries)-len(s.deleted))
+	for idx, r := range s.entries {
+		if any(r) == any(zero) {
 			continue
 		}
 
-		if _, ok := del[idx]; !ok {
+		if _, ok := del[idx]; ok {
 			continue
 		}
 
-		Entries = append(Entries, r)
-		index[r.ID()] = idx
+		entries = append(entries, r)
+		index[s.key(r)] = newIdx
+		newIdx++
 	}
 
-	s.Cap = max(len(Entries), s.Cap)
-	s.Deleted = make([]int, 0)
+	s.Cap = max(len(entries), s.Cap)
+	s.deleted = make([]int, 0)
 	s.index = index
-	s.Entries = Entries
+	s.entries = entries
 }
 
-func (s *OrderedMap[V]) List() []signals.Receiver[V] {
-	s.checkDeleted()
-	return s.Entries
+func (s *OrderedMap[V]) List() []V {
+	s.checkdeleted()
+	return s.entries
 }
 
-func (s *OrderedMap[V]) Get(key string) (signals.Receiver[V], bool) {
-	s.checkDeleted()
+func (s *OrderedMap[V]) Has(key string) bool {
+	s.checkdeleted()
+	_, ok := s.index[key]
+	return ok
+}
+
+func (s *OrderedMap[V]) Get(key string) (v V, b bool) {
+	s.checkdeleted()
 
 	idx, ok := s.index[key]
 	if !ok {
-		return nil, false
+		return v, false
 	}
 
-	return s.Entries[idx], true
+	return s.entries[idx], true
 }
 
 func (s *OrderedMap[V]) Delete(key string) bool {
@@ -77,28 +84,32 @@ func (s *OrderedMap[V]) Delete(key string) bool {
 	}
 
 	delete(s.index, key)
-	s.Entries[idx] = nil
-	s.Deleted = append(s.Deleted, idx)
+	s.entries[idx] = *new(V)
+	s.deleted = append(s.deleted, idx)
 	return true
 }
 
-func (s *OrderedMap[V]) Set(key string, value signals.Receiver[V]) bool {
-	s.checkDeleted()
+func (s *OrderedMap[V]) SetK(key string, value V) bool {
+	s.checkdeleted()
 
 	if idx, ok := s.index[key]; ok {
-		s.Entries[idx] = value
+		s.entries[idx] = value
 		return true
 	}
 
-	s.index[key] = len(s.Entries)
-	s.Entries = append(s.Entries, value)
-	s.Cap = max(len(s.Entries), s.Cap)
+	s.index[key] = len(s.entries)
+	s.entries = append(s.entries, value)
+	s.Cap = max(len(s.entries), s.Cap)
 	return true
 }
 
+func (s *OrderedMap[V]) Set(value V) bool {
+	return s.SetK(s.key(value), value)
+}
+
 func (s *OrderedMap[V]) Clear() {
-	s.Deleted = make([]int, s.Cap)
-	s.Entries = make([]signals.Receiver[V], s.Cap)
+	s.deleted = make([]int, 0, s.Cap)
+	s.entries = make([]V, 0, s.Cap)
 	clear(s.index)
 }
 

@@ -3,6 +3,8 @@ package signals
 import (
 	"context"
 	"sync"
+
+	"github.com/Nigel2392/go-signals/internal/omap"
 )
 
 type SignalPool[T any] interface {
@@ -17,13 +19,13 @@ type SignalPool[T any] interface {
 // Can also be used to send signals to receivers.
 type Pool[T any] struct {
 	mu sync.RWMutex
-	m  map[string]Signal[T]
+	m  *omap.OrderedMap[Signal[T]]
 }
 
 // Return a new pool of signals.
 func NewPool[T any]() *Pool[T] {
 	return &Pool[T]{
-		m: make(map[string]Signal[T]),
+		m: omap.NewOrderedMap(0, Signal[T].Name),
 	}
 }
 
@@ -32,7 +34,7 @@ func NewPool[T any]() *Pool[T] {
 // This will create one if it does not exist.
 func (m *Pool[T]) load(signalName string) (value Signal[T], ok bool) {
 	m.mu.RLock()
-	value, ok = m.m[signalName]
+	value, ok = m.m.Get(signalName)
 	m.mu.RUnlock()
 	return
 }
@@ -41,21 +43,25 @@ func (m *Pool[T]) load(signalName string) (value Signal[T], ok bool) {
 // Use .Get() to create a new signal if it does not exist.
 func (m *Pool[T]) store(signalName string, value Signal[T]) {
 	m.mu.Lock()
-	m.m[signalName] = value
+	m.m.SetK(signalName, value)
 	m.mu.Unlock()
 }
 
 // Delete a signal from the pool.
 func (m *Pool[T]) Delete(signalName string) {
 	m.mu.Lock()
-	delete(m.m, signalName)
+	m.m.Delete(signalName)
 	m.mu.Unlock()
+}
+
+func (m *Pool[T]) Size() int {
+	return m.m.Length()
 }
 
 // Range over signals inside of the pool.
 func (m *Pool[T]) Range(f func(value Signal[T]) bool) {
 	m.mu.RLock()
-	for _, value := range m.m {
+	for _, value := range m.m.List() {
 		if !f(value) {
 			break
 		}
@@ -100,18 +106,6 @@ func (m *Pool[T]) NewSignal(ctx context.Context, name string) Signal[T] {
 	s = &signal[T]{name: name, receivers: make([]Receiver[T], 0)}
 	m.store(name, s)
 	return s
-}
-
-// Create or send a signal inside of the signal pool.
-//
-// This will send a signal to the receivers, if the signal already exists.
-func (m *Pool[T]) CreateOrSend(ctx context.Context, name string, value T) error {
-	var s, ok = m.load(name)
-	if !ok {
-		s = &signal[T]{name: name, receivers: make([]Receiver[T], 0)}
-		m.store(name, s)
-	}
-	return s.Send(ctx, value)
 }
 
 // Register a receiver to a signal.

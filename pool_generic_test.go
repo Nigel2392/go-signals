@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -94,19 +95,22 @@ func TestGMultiple(t *testing.T) {
 
 func BenchmarkGSignals(b *testing.B) {
 	b.StopTimer()
-	var signal = gPool.Get[string](strconv.Itoa(int(time.Now().UnixNano())))
 	var incr int
-
-	connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+	var sigName = strconv.Itoa(int(time.Now().UnixNano()))
+	var incrFn = func(ctx context.Context, signal signals.Signal[string], value string) error {
 		incr++
 		return nil
-	})
+	}
+
+	for i := 0; i < TOTAL_AMOUNT; i++ {
+		gPool.Listen(b.Context(), sigName, incrFn)
+	}
 
 	b.StartTimer()
 	b.ResetTimer()
 
 	for b.Loop() {
-		signal.Send(b.Context(), "This is a signal message!")
+		gPool.Send(b.Context(), sigName, "This is a signal message!")
 	}
 
 	if incr != TOTAL_AMOUNT*b.N {
@@ -169,6 +173,101 @@ func TestGMany(t *testing.T) {
 	for i := 0; i < amountCount; i++ {
 		signal.Send(t.Context(), "This is a signal message!")
 	}
+}
+
+func TestRangeT(t *testing.T) {
+	var (
+		pool = signals.NewGPool()
+
+		// signal_string_1
+		_ = pool.Get[string]("signal_string_1")
+		// signal_string_2
+		_ = pool.Get[string]("signal_string_2")
+		// signal_string_3
+		_ = pool.Get[string]("signal_string_3")
+		// signal_int64
+		_ = pool.Get[int64]("signal_int64")
+		// signal_float64
+		_ = pool.Get[float64]("signal_float64")
+	)
+
+	t.Run("RangeT", func(t *testing.T) {
+		got := make([]string, 0)
+		pool.RangeT(func(value signals.Signal[string]) bool {
+			got = append(got, value.Name())
+			return true
+		})
+
+		expected := []string{
+			"signal_string_1",
+			"signal_string_2",
+			"signal_string_3",
+		}
+
+		if !reflect.DeepEqual(got, expected) {
+			t.Errorf("received %v, but expected %v", got, expected)
+		}
+	})
+
+	t.Run("Range", func(t *testing.T) {
+		got := make([]string, 0)
+		expected := []string{
+			"signal_string_1",
+			"signal_string_2",
+			"signal_string_3",
+			"signal_int64",
+			"signal_float64",
+		}
+
+		pool.Range(func(value signals.Signal[any]) bool {
+			got = append(got, value.Name())
+			return true
+		})
+
+		if !reflect.DeepEqual(got, expected) {
+			t.Errorf("received %v, but expected %v", got, expected)
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		t.Run("RangeT", func(t *testing.T) {
+
+			got := make([]string, 0)
+			expected := []string{
+				"signal_string_1",
+				"signal_string_3",
+			}
+
+			pool.Delete("signal_string_2")
+			pool.RangeT(func(value signals.Signal[string]) bool {
+				got = append(got, value.Name())
+				return true
+			})
+
+			if !reflect.DeepEqual(got, expected) {
+				t.Errorf("received %v, but expected %v", got, expected)
+			}
+		})
+
+		t.Run("Range", func(t *testing.T) {
+			got := make([]string, 0)
+			expected := []string{
+				"signal_string_1",
+				"signal_string_3",
+				"signal_int64",
+				"signal_float64",
+			}
+
+			pool.Range(func(value signals.Signal[any]) bool {
+				got = append(got, value.Name())
+				return true
+			})
+
+			if !reflect.DeepEqual(got, expected) {
+				t.Errorf("received %v, but expected %v", got, expected)
+			}
+		})
+	})
 }
 
 func TestGSendAsync(t *testing.T) {

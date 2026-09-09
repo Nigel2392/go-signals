@@ -8,7 +8,10 @@ import (
 	"sync/atomic"
 )
 
-var _ Signal[any] = (*signal[any])(nil)
+var (
+	_ Signal[int]      = (*signal[int])(nil)
+	_ Transmitter[int] = (*signal[int])(nil)
+)
 
 // Underlying signal struct for the Signal interface.
 //
@@ -35,12 +38,15 @@ func New[T any](name string) Signal[T] {
 func (s *signal[T]) getReceivers() []Receiver[T] {
 
 	if s.dirty.Load() {
-		s.mu.RLock()
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		s.cached = slices.Clone(s.receivers)
 		s.dirty.Store(false)
-		s.mu.RUnlock()
+		return s.cached
 	}
 
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.cached
 }
 
@@ -88,9 +94,6 @@ func (s *signal[T]) Send(ctx context.Context, value T) error {
 // Connect a receiver to the signal.
 // This will call the receiver's Signal, setting the receiver's signal to this signal.
 func (s *signal[T]) Connect(ctx context.Context, receivers ...Receiver[T]) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	for _, receiver := range receivers {
 		err := receiver.Bind(ctx, s)
 		if err != nil {
@@ -98,9 +101,13 @@ func (s *signal[T]) Connect(ctx context.Context, receivers ...Receiver[T]) error
 				"receiver %q:", receiver.ID(),
 			)
 		}
-
-		s.receivers = append(s.receivers, receiver)
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// append in one go instead of in the above loop
+	s.receivers = append(s.receivers, receivers...)
 
 	s.dirty.Store(
 		s.dirty.Load() ||
@@ -112,9 +119,6 @@ func (s *signal[T]) Connect(ctx context.Context, receivers ...Receiver[T]) error
 
 // Disconnect a receiver from the signal.
 func (s *signal[T]) Disconnect(ctx context.Context, other ...Receiver[T]) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	// Validate if any receivers have been connected.
 	if len(other) == 0 {
 		return ErrReceiver.WithCause(
@@ -122,14 +126,21 @@ func (s *signal[T]) Disconnect(ctx context.Context, other ...Receiver[T]) error 
 		)
 	}
 
-	var idMap = make(map[string]struct{}, len(other))
+	// manual lock management instead of defers
+	// for higher perf and to prevent deadlocks (i.e. disconnect called within disconnect)
+	s.mu.RLock()
+
+	recvs := slices.Clone(s.receivers)
+	idMap := make(map[string]struct{}, len(other))
 	for _, r := range other {
 		idMap[r.ID()] = struct{}{}
 	}
 
+	s.mu.RUnlock()
+
 	// Disconnect the receivers.
-	var newRecvs = make([]Receiver[T], 0, len(s.receivers))
-	for _, recv := range s.receivers {
+	var newRecvs = make([]Receiver[T], 0, len(recvs))
+	for _, recv := range recvs {
 		_, ok := idMap[recv.ID()]
 		if !ok {
 			newRecvs = append(newRecvs, recv)
@@ -143,19 +154,24 @@ func (s *signal[T]) Disconnect(ctx context.Context, other ...Receiver[T]) error 
 		}
 	}
 
+	// manual lock management instead of defers
+	s.mu.Lock()
 	s.receivers = newRecvs
 	s.dirty.Store(true)
-
+	s.mu.Unlock()
 	return nil
 }
 
 // Clear the signal's receivers.
 // This will disconnect all receivers from the signal.
 func (s *signal[T]) Clear(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// manual lock management instead of defers
+	// for higher perf and to prevent deadlocks (i.e. Clear called within Clear)
+	s.mu.RLock()
+	recvs := slices.Clone(s.receivers)
+	s.mu.RUnlock()
 
-	for _, receiver := range s.receivers {
+	for _, receiver := range recvs {
 		err := receiver.Disconnect(ctx)
 		if err != nil {
 			return ErrReceiver.WithCause(err).Wrapf(
@@ -164,8 +180,10 @@ func (s *signal[T]) Clear(ctx context.Context) error {
 		}
 	}
 
+	s.mu.Lock()
 	s.receivers = make([]Receiver[T], 0)
 	s.dirty.Store(true)
+	s.mu.Unlock()
 	return nil
 }
 

@@ -250,8 +250,8 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 
 	// Manually inject subscriber into pool
 	pool.Mu.Lock()
-	q := omap.NewOrderedMap[any](0)
-	q.Set("dummy", &wrappedReceiver[any]{id: "dummy"})
+	q := omap.NewOrderedMap(0, signals.Receiver[any].ID)
+	q.Set(&wrappedReceiver[any]{id: "dummy"})
 
 	pool.subscribers["test_topic"] = &subscriber{
 		pubsub:    mockSub,

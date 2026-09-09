@@ -123,5 +123,5 @@ func SendAsync[T any](ctx context.Context, sig Signal[T], val T) <-chan error {
 		return errChan
 	}
 
-	return asyncSend(ctx, sig, t.Receivers(ctx), val)
+	return asyncReceive(ctx, sig, t.Receivers(ctx), val)
 }
