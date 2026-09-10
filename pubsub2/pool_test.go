@@ -13,14 +13,14 @@ import (
 func TestPoolInternalState(t *testing.T) {
 	client := NewMockPubSub(true)
 
-	customErrFn := func(p *Pool, err error) {
+	customErrFn := func(ctx context.Context, p *Pool, err error) {
 	}
 
 	pool := New(client, pubsub.PoolOnError(customErrFn))
 
 	// Initial State Validation
 	t.Run("InitialState", func(t *testing.T) {
-		if pool.Client() != client {
+		if pool.MustClient(t.Context()) != client {
 			t.Errorf("expected client to be set")
 		}
 		if pool.signals == nil || len(pool.signals) != 0 {
@@ -100,7 +100,9 @@ func TestPoolWaitLoop(t *testing.T) {
 	client := NewMockPubSub(false)
 	pool := New(client)
 
-	if pool.Channel() == nil {
+	pool.MustClient(t.Context())
+
+	if pool.Channel(t.Context()) == nil {
 		t.Errorf("Channel not set correctly")
 	}
 
@@ -118,7 +120,67 @@ func TestPoolWaitLoop(t *testing.T) {
 	// Trigger a send
 	pool.Send(context.Background(), "test_topic", "loop message")
 
-	close(pool.Channel()) // Close channel to exit the WaitLoop iter
+	close(pool.Channel(t.Context())) // Close channel to exit the WaitLoop iter
+
+	count := 0
+	for handler, err := range pool.WaitLoop(context.Background()) {
+		if err != nil {
+			t.Errorf("WaitLoop error: %v", err)
+		}
+
+		if err := handler.Process(t.Context()); err != nil {
+			t.Errorf("Process error: %v", err)
+		}
+
+		if handler.Value != "loop message" {
+			t.Errorf("expected 'loop message', got '%v'", handler.Value)
+		}
+		count++
+	}
+
+	if count != 1 {
+		t.Errorf("expected WaitLoop to yield 1 message, got %d", count)
+	}
+
+	// wait for goroutine in WaitLoop to finish
+	select {
+	case val := <-receivedValue:
+		if val != "loop message" {
+			t.Errorf("expected received value 'loop message', got '%s'", val)
+		}
+	case <-time.After(time.Second):
+		t.Errorf("timed out waiting for receiver")
+	}
+}
+
+func TestTPoolWaitLoop(t *testing.T) {
+	pool := New(func() pubsub.PubSub {
+		return NewMockPubSub(false)
+	}).TPool[string]()
+
+	sig := pool.NewSignal(context.Background(), "test_topic")
+
+	receivedValue := make(chan string, 1)
+	_, err := sig.Listen(context.Background(), func(ctx context.Context, s signals.Signal[string], val string) error {
+		receivedValue <- val
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Listen error: %v", err)
+	}
+
+	if pool.Channel(t.Context()) != nil {
+		t.Errorf("Expected channel to be nil until send")
+	}
+
+	// Trigger a send
+	pool.Send(context.Background(), "test_topic", "loop message")
+
+	if pool.Channel(t.Context()) == nil {
+		t.Errorf("Channel not set correctly")
+	}
+
+	close(pool.Channel(t.Context())) // Close channel to exit the WaitLoop iter
 
 	count := 0
 	for handler, err := range pool.WaitLoop(context.Background()) {
@@ -232,7 +294,7 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	client := NewMockPubSub(true)
 
 	var lastErr error
-	pool := New(client, pubsub.PoolOnError(func(p *Pool, err error) {
+	pool := New(client, pubsub.PoolOnError(func(ctx context.Context, p *Pool, err error) {
 		lastErr = err
 	}))
 

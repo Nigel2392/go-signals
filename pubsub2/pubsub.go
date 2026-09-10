@@ -49,11 +49,18 @@ func TypedSignal[NEWT any](s signals.Signal[any]) signals.Signal[NEWT] {
 
 func TypedReceiver[NEWT any](s signals.Receiver[any]) signals.Receiver[NEWT] {
 	switch s := s.(type) {
+	case *ifaceReceiver[NEWT]:
+		return s.Receiver
+
+	case *wrappedReceiver[NEWT]:
+		return (*receiver[NEWT])(s)
+
 	case unwrapper[signals.Receiver[NEWT]]:
 		return s.Unwrap()
 
 	case unwrapper[*receiver[NEWT]]:
 		return s.Unwrap()
+
 	default:
 		panic(fmt.Sprintf("cannot unwrap %T into %s", s, reflect.TypeFor[signals.Receiver[NEWT]]()))
 	}

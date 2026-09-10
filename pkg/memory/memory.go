@@ -27,9 +27,9 @@ type memoryPubSub struct {
 	subscribers map[string]*memorySubscriber
 }
 
-func (s *memoryPubSub) BindChannel(b pubsub.ChannelBinder) {
+func (s *memoryPubSub) BindChannel(ctx context.Context, b pubsub.ChannelBinder) {
 	if s.publish != nil {
-		b.SetChannel(s.publish)
+		b.SetChannel(ctx, s.publish)
 	}
 }
 

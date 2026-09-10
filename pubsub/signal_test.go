@@ -25,8 +25,10 @@ func BenchmarkSignals(b *testing.B) {
 	b.StopTimer()
 
 	pool := New[string](
-		NewMockPubSub(false),
-		PoolOnError(func(p *Pool[string], err error) {
+		func() PubSub {
+			return NewMockPubSub(false)
+		},
+		PoolOnError(func(ctx context.Context, p *Pool[string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
 		}),

@@ -1,6 +1,7 @@
 package pubsub
 
 import (
+	"context"
 	"time"
 	"uuid"
 
@@ -14,7 +15,7 @@ type ConfigPool interface {
 }
 
 type ConfigErrPool[POOLTYPE ConfigErrPool[POOLTYPE]] interface {
-	WithOnError(func(POOLTYPE, error))
+	WithOnError(func(context.Context, POOLTYPE, error))
 }
 
 type PoolOption func(p ConfigPool)
@@ -25,7 +26,7 @@ func PoolEncoder[T any](enc encoder.Encoder) PoolOption {
 	}
 }
 
-func PoolOnError[POOLTYPE ConfigErrPool[POOLTYPE]](fn func(POOLTYPE, error)) PoolOption {
+func PoolOnError[POOLTYPE ConfigErrPool[POOLTYPE]](fn func(context.Context, POOLTYPE, error)) PoolOption {
 	return func(p ConfigPool) {
 		errSet := p.(POOLTYPE)
 		errSet.WithOnError(fn)

@@ -44,7 +44,7 @@ func BenchmarkSignals(b *testing.B) {
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
 		}),
@@ -104,7 +104,7 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolOnError(func(p *pubsub2.Pool, err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
 		}),
@@ -163,7 +163,7 @@ func TestSignalsSynchronous(t *testing.T) {
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			t.Log(string(debug.Stack()))
 			t.Error(err)
 		}),
@@ -225,7 +225,7 @@ func TestPoolSend(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime(time.Millisecond*10),
-		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
 	)
@@ -348,7 +348,7 @@ func TestMultiplePoolsSend(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime(time.Millisecond),
-		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
 	)
@@ -397,7 +397,7 @@ func TestMultiplePoolsSend(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime(time.Millisecond),
-		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
 	)
@@ -484,7 +484,7 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime(time.Millisecond),
-		pubsub.PoolOnError(func(p *pubsub2.Pool, err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			errCh <- err
 		}),
 	)
@@ -533,7 +533,7 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime(time.Millisecond),
-		pubsub.PoolOnError(func(p *pubsub2.Pool, err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			errCh <- err
 		}),
 	)
@@ -620,7 +620,7 @@ func TestPoolContextErr(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime(time.Millisecond*10),
-		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
 	)
@@ -693,7 +693,7 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime(time.Millisecond*10),
-		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
 	)
@@ -762,7 +762,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime(time.Microsecond*200), // 0.2ms
-		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
 	)
@@ -833,7 +833,7 @@ func TestSendAsync(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolTickTime(time.Millisecond*10),
-		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
 	)

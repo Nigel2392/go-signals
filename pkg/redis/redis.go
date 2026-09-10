@@ -64,9 +64,9 @@ func (s *redisPubSub) client() MinimalClient {
 	return s._client
 }
 
-func (s *redisPubSub) BindChannel(b pubsub.ChannelBinder) {
+func (s *redisPubSub) BindChannel(ctx context.Context, b pubsub.ChannelBinder) {
 	if s.publish != nil {
-		b.SetChannel(s.publish)
+		b.SetChannel(ctx, s.publish)
 	}
 }
 

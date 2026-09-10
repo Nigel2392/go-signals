@@ -37,7 +37,7 @@ type MyType struct {
 //			PubSub(),
 //			// pubsub.PoolTickTime(time.Millisecond/5),
 //			pubsub.PoolPrefersBlock,
-//			pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+//			pubsub.PoolOnError(func(ctx context.Context,p *pubsub.Pool[string], err error) {
 //				b.Log(string(debug.Stack()))
 //				b.Error(err)
 //			}),
@@ -71,7 +71,7 @@ func BenchmarkSignals(b *testing.B) {
 
 	pool := pubsub.New[string](
 		PubSub(false),
-		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
 		}),
@@ -124,7 +124,7 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 
 	pool := pubsub2.New(
 		PubSub(false),
-		pubsub.PoolOnError(func(p *pubsub2.Pool, err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
 		}),
@@ -181,7 +181,7 @@ func TestSignalsSynchronous(t *testing.T) {
 
 	pool := pubsub.New[string](
 		PubSub(false),
-		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			t.Log(string(debug.Stack()))
 			t.Error(err)
 		}),
@@ -236,7 +236,7 @@ func TestPoolSend(t *testing.T) {
 		PubSub(true),
 		pubsub.PoolTickTime(time.Millisecond*10),
 		// pubsub.PoolPrefersBlock,
-		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
 	)
@@ -337,7 +337,7 @@ func TestPoolContextErr(t *testing.T) {
 	pool := pubsub.New[MyType](
 		PubSub(true),
 		pubsub.PoolTickTime(time.Millisecond*10),
-		pubsub.PoolOnError(func(p *pubsub.Pool[MyType], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
 	)
@@ -402,7 +402,7 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 
 	pool := pubsub.New[string](
 		PubSub(true),
-		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
 	)
@@ -465,7 +465,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 		PubSub(true),
 		// pubsub.PoolTickTime(time.Millisecond/5),
 		pubsub.PoolTickTime(time.Millisecond/5),
-		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
 	)
@@ -526,7 +526,7 @@ func TestSendAsync(t *testing.T) {
 
 	pool := pubsub.New[string](
 		PubSub(true),
-		pubsub.PoolOnError(func(p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
 	)

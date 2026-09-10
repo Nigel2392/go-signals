@@ -12,7 +12,7 @@ import (
 	"github.com/Nigel2392/go-signals"
 )
 
-func (r *BasePool) processReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(error)) {
+func (r *BasePool) processReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(context.Context, error)) {
 
 	ctx = contextWithPool(ctx, r)
 
@@ -31,7 +31,7 @@ func (r *BasePool) processReceivers[T any](ctx context.Context, sig signals.Sign
 	wg.Wait()
 }
 
-func (r *BasePool) processBatch[T any](ctx context.Context, wg *sync.WaitGroup, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(error)) {
+func (r *BasePool) processBatch[T any](ctx context.Context, wg *sync.WaitGroup, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(context.Context, error)) {
 	defer wg.Done()
 
 	for _, receiver := range receivers {
@@ -41,7 +41,7 @@ func (r *BasePool) processBatch[T any](ctx context.Context, wg *sync.WaitGroup, 
 
 		err := receiver.Receive(ctx, sig, val)
 		if err != nil {
-			callErr(signals.ErrReceiver.WithCause(err).Wrapf(
+			callErr(ctx, signals.ErrReceiver.WithCause(err).Wrapf(
 				"receiver %q:", receiver.ID(),
 			))
 		}

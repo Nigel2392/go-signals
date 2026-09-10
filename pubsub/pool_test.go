@@ -12,7 +12,7 @@ import (
 func TestPoolInternalState(t *testing.T) {
 	client := NewMockPubSub(true)
 
-	customErrFn := func(p *Pool[string], err error) {
+	customErrFn := func(ctx context.Context, p *Pool[string], err error) {
 	}
 
 	pool := New[string](client, PoolOnError(customErrFn))
@@ -99,7 +99,9 @@ func TestPoolWaitLoop(t *testing.T) {
 	client := NewMockPubSub(false)
 	pool := New[string](client)
 
-	if pool.Channel() == nil {
+	pool.MustClient(t.Context())
+
+	if pool.Channel(t.Context()) == nil {
 		t.Errorf("Channel not set correctly")
 	}
 
@@ -117,7 +119,7 @@ func TestPoolWaitLoop(t *testing.T) {
 	// Trigger a send
 	pool.Send(context.Background(), "test_topic", "loop message")
 
-	close(pool.Channel()) // Close channel to exit the WaitLoop iter
+	close(pool.Channel(t.Context())) // Close channel to exit the WaitLoop iter
 
 	count := 0
 	for handler, err := range pool.WaitLoop(context.Background()) {
@@ -231,7 +233,7 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	client := NewMockPubSub(true)
 
 	var lastErr error
-	pool := New[string](client, PoolOnError(func(p *Pool[string], err error) {
+	pool := New[string](client, PoolOnError(func(ctx context.Context, p *Pool[string], err error) {
 		lastErr = err
 	}))
 

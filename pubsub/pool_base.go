@@ -3,6 +3,7 @@ package pubsub
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,7 +21,7 @@ type RWLocker interface {
 
 type ProcessorBasePool BasePool
 
-func (p *ProcessorBasePool) ProcessReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(error)) {
+func (p *ProcessorBasePool) ProcessReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(context.Context, error)) {
 	(*BasePool)(p).processReceivers(ctx, sig, receivers, val, callErr)
 }
 
@@ -40,7 +41,13 @@ type BasePool struct {
 
 	// the underlying interface that handles
 	// data transmission and retrieval
-	client PubSub
+	client     PubSub
+	_getClient func(context.Context) PubSub
+
+	wasSetup atomic.Bool
+
+	// handle lazy initialisation of the client.
+	onClientInit []func(context.Context, PubSub) error
 
 	// channel for running in synchronous mode with WaitLoop
 	//
@@ -68,18 +75,53 @@ type BasePool struct {
 	backref ChannelBinder
 }
 
-func NewBasePool(pubsub PubSub) BasePool {
-	return BasePool{
-		Mu:     &sync.RWMutex{},
-		client: pubsub,
+func NewBasePool(pubsub any) *BasePool {
+	pool := &BasePool{
+		Mu: &sync.RWMutex{},
 	}
+
+	switch c := pubsub.(type) {
+	case PubSub:
+		pool.client = c
+
+	case func() PubSub:
+		pool._getClient = func(ctx context.Context) PubSub {
+			return c()
+		}
+	case func(context.Context) PubSub:
+		pool._getClient = func(ctx context.Context) PubSub {
+			return c(ctx)
+		}
+
+	case func(context.Context, ChannelBinder) PubSub:
+		pool._getClient = func(ctx context.Context) PubSub {
+			return c(ctx, pool.backref)
+		}
+
+	default:
+		panic(fmt.Sprintf("unknown client type: %T", pubsub))
+	}
+
+	return pool
+}
+
+func (r *BasePool) ClientWasSetup() bool {
+	return r.client != nil
+}
+
+func (r *BasePool) OnClientInit(ctx context.Context, fn func(context.Context, PubSub) error) error {
+	if r.ClientWasSetup() {
+		return fn(ctx, r.client)
+	}
+	r.onClientInit = append(r.onClientInit, fn)
+	return nil
 }
 
 func (r *BasePool) WithReference(ref ChannelBinder) {
 	r.backref = ref
 }
 
-func (r *BasePool) Setup() {
+func (r *BasePool) Initialize() {
 	if r.Encoder == nil {
 		r.Encoder = encoder.NewJSONEncoder()
 	}
@@ -91,10 +133,70 @@ func (r *BasePool) Setup() {
 	if (r.Inst == uuid.UUID{}) {
 		r.Inst = uuid.New()
 	}
+}
+
+func (r *BasePool) ID() uuid.UUID {
+	return r.Inst
+}
+
+func (r *BasePool) setupClient(ctx context.Context) error {
+	if r.client != nil && r.wasSetup.Load() {
+		return nil
+	}
+
+	if r.client == nil && r._getClient == nil {
+		panic("client is nil and _getClient is nil, cannot setup")
+	}
+
+	if r.client == nil && r._getClient != nil {
+		r.client = r._getClient(ctx)
+	}
+
+	r.wasSetup.Store(true)
 
 	if b, ok := r.client.(PubSubBinder); ok {
-		b.BindChannel(r.backref)
+		b.BindChannel(ctx, r)
 	}
+
+	for _, fn := range r.onClientInit {
+		if err := fn(ctx, r.client); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *BasePool) MustClient(ctx context.Context) PubSub {
+	if err := r.setupClient(ctx); err != nil {
+		panic(fmt.Errorf("error initialising client: %w", err))
+	}
+	return r.client
+}
+
+func (r *BasePool) Client(ctx context.Context) (PubSub, error) {
+	err := r.setupClient(ctx)
+	return r.client, err
+}
+
+func (r *BasePool) SetChannel(ctx context.Context, ch chan Message) {
+	r.Data = ch
+}
+
+func (r *BasePool) Channel(ctx context.Context) chan Message {
+	return r.Data
+}
+
+func (p *BasePool) WithInstanceID(id uuid.UUID) {
+	p.Inst = id
+}
+
+func (p *BasePool) WithEncoder(enc encoder.Encoder) {
+	p.Encoder = enc
+}
+
+func (p *BasePool) WithTickDuration(t time.Duration) {
+	p.TickTime = t
 }
 
 func (r *BasePool) decodeMessage[T any](_ context.Context, data []byte) (msg *Message, sentVal T, err error) {
@@ -111,32 +213,4 @@ func (r *BasePool) decodeMessage[T any](_ context.Context, data []byte) (msg *Me
 	}
 
 	return payload, *val, err
-}
-
-func (r *BasePool) ID() uuid.UUID {
-	return r.Inst
-}
-
-func (r *BasePool) Client() PubSub {
-	return r.client
-}
-
-func (r *BasePool) SetChannel(ch chan Message) {
-	r.Data = ch
-}
-
-func (r *BasePool) Channel() chan Message {
-	return r.Data
-}
-
-func (p *BasePool) WithInstanceID(id uuid.UUID) {
-	p.Inst = id
-}
-
-func (p *BasePool) WithEncoder(enc encoder.Encoder) {
-	p.Encoder = enc
-}
-
-func (p *BasePool) WithTickDuration(t time.Duration) {
-	p.TickTime = t
 }

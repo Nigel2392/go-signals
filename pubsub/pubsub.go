@@ -65,7 +65,7 @@ type PubSub interface {
 
 // Bind a [PubSub] to a [Pool] type.
 type PubSubBinder interface {
-	BindChannel(ChannelBinder)
+	BindChannel(context.Context, ChannelBinder)
 }
 
 // PubSubMsgMaker allows for [PubSub] objects
@@ -113,7 +113,7 @@ type Message struct {
 // ChannelBinder is implemented by the [Pool] type to
 // allow for the blocking WaitLoop function.
 type ChannelBinder interface {
-	Client() PubSub
-	Channel() chan Message
-	SetChannel(ch chan Message)
+	Client(ctx context.Context) (PubSub, error)
+	Channel(ctx context.Context) chan Message
+	SetChannel(ctx context.Context, ch chan Message)
 }

@@ -7,6 +7,7 @@ import (
 	"iter"
 	"log"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/Nigel2392/go-signals"
@@ -15,7 +16,7 @@ import (
 )
 
 type Pool struct {
-	pubsub.BasePool
+	*pubsub.BasePool
 
 	// map of topic to signal objects
 	signals map[string]PoolSignal
@@ -25,14 +26,14 @@ type Pool struct {
 
 	// special function to handle any
 	// errors that occur during the async/loop process
-	onErr func(*Pool, error)
+	onErr func(context.Context, *Pool, error)
 }
 
-func defaultPoolError(p *Pool, err error) {
-	log.Printf("error in pool %T: %v", p.Client(), err)
+func defaultPoolError(ctx context.Context, p *Pool, err error) {
+	log.Printf("error in pool %T: %v", p.MustClient(ctx), err)
 }
 
-func New(pub pubsub.PubSub, opts ...pubsub.PoolOption) *Pool {
+func New(pub any, opts ...pubsub.PoolOption) *Pool {
 	pool := &Pool{
 		BasePool:    pubsub.NewBasePool(pub),
 		signals:     make(map[string]PoolSignal),
@@ -45,7 +46,7 @@ func New(pub pubsub.PubSub, opts ...pubsub.PoolOption) *Pool {
 		opt((*Pool)(pool))
 	}
 
-	pool.BasePool.Setup()
+	pool.BasePool.Initialize()
 
 	if pool.onErr == nil {
 		pool.onErr = defaultPoolError
@@ -54,28 +55,43 @@ func New(pub pubsub.PubSub, opts ...pubsub.PoolOption) *Pool {
 	return pool
 }
 
-func GoNew(ctx context.Context, pubsub pubsub.PubSub, opts ...pubsub.PoolOption) *Pool {
-	var pool = New(pubsub, opts...)
-	if pool.Data == nil {
-		go pool.Loop(ctx)
-		return pool
+func GoNew[T any](ctx context.Context, pubsub any, opts ...pubsub.PoolOption) *Pool {
+	pool := New(pubsub, opts...)
+	err := pool.BasePool.OnClientInit(ctx, pool.goNew)
+	if err != nil {
+		panic(err)
 	}
-	go func() {
+
+	return pool
+}
+
+func (p *Pool) goNew(ctx context.Context, _ pubsub.PubSub) error {
+	if p.Data == nil {
+		go p.Loop(ctx)
+		return nil
+	}
+
+	go func(pool *Pool) {
 		for h, err := range pool.WaitLoop(ctx) {
 			if err != nil {
-				pool.callErr(err)
+				pool.callErr(ctx, err)
 				continue
 			}
 
 			if err := h.Process(ctx); err != nil {
-				pool.callErr(err)
+				pool.callErr(ctx, err)
 			}
 		}
-	}()
-	return pool
+	}(p)
+
+	return nil
 }
 
-func (p *Pool) WithOnError(fn func(*Pool, error)) {
+func (p *Pool) TPool[T any]() pubsub.PubSubPool[T] {
+	return (*TPool[T])(p)
+}
+
+func (p *Pool) WithOnError(fn func(context.Context, *Pool, error)) {
 	p.onErr = fn
 }
 
@@ -94,7 +110,14 @@ func (r *Pool) Send[T any](ctx context.Context, topic string, value T) error {
 		)
 	}
 
-	err = r.Client().Publish(ctx, topic, data)
+	c, err := r.Client(ctx)
+	if err != nil {
+		return signals.ErrSignal.WithCause(err).Wrapf(
+			"could not initialize client %T", c,
+		)
+	}
+
+	err = c.Publish(ctx, topic, data)
 	if err != nil {
 		return signals.ErrSignal.WithCause(err).Wrapf(
 			"could not publish %T", value,
@@ -134,12 +157,11 @@ func (r *Pool) NewSignal[T any](_ context.Context, name string) signals.Signal[T
 		r.signals[name] = sig
 	}
 
-	typedSig := (*signal[T])(sig.(*wrappedSignal[T]))
-	if chkTyp := reflect.TypeFor[T](); chkTyp != typedSig.MsgType() {
-		panic(fmt.Sprintf("%s does not match required type %s", chkTyp, typedSig.typ))
+	if chkTyp := reflect.TypeFor[T](); chkTyp != sig.MsgType() {
+		panic(fmt.Sprintf("%s does not match required type %s", chkTyp, sig.MsgType()))
 	}
 
-	return typedSig
+	return (*signal[T])(sig.(*wrappedSignal[T]))
 }
 
 // Execute the scheduling loop in a synchronous blocking mode.
@@ -158,6 +180,22 @@ func (r *Pool) NewSignal[T any](_ context.Context, name string) signals.Signal[T
 //
 // Using this function is also great for benchmarking, as it isnt reliant on the timer.
 func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[any], error] {
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	var err = r.BasePool.OnClientInit(ctx, func(ctx context.Context, ps pubsub.PubSub) error {
+		wg.Done()
+		return nil
+	})
+	if err != nil {
+		return func(yield func(pubsub.Handler[any], error) bool) {
+			yield(pubsub.Handler[any]{}, err)
+		}
+	}
+
+	wg.Wait()
+
 	if r.Data == nil {
 		panic(signals.ErrUnsupported.Wrap(
 			"cannot call Pool.Handle without having called Pool.SetChannel",
@@ -173,6 +211,15 @@ func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[any], erro
 			if !ok {
 				r.Mu.RUnlock()
 				continue
+			}
+
+			if sub.pubsub == nil {
+				r.Mu.RUnlock()
+
+				panic(fmt.Sprintf(
+					"subscriber client is nil but data is being received for channel %s",
+					payload.Channel,
+				))
 			}
 
 			sig, ok := r.signals[payload.Channel]
@@ -210,7 +257,7 @@ func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[any], erro
 			}
 
 			// process
-			handler := pubsub.NewHandler[any](&r.BasePool)
+			handler := pubsub.NewHandler[any](r.BasePool)
 			handler.Value = val
 			handler.Signal = sig
 			handler.Receivers = sub._cached
@@ -224,6 +271,21 @@ func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[any], erro
 }
 
 func (r *Pool) Loop(ctx context.Context) {
+
+	if !r.BasePool.ClientWasSetup() {
+		outerCtx := ctx
+		err := r.BasePool.OnClientInit(ctx, func(ctx context.Context, ps pubsub.PubSub) error {
+			go r.Loop(outerCtx)
+			return nil
+		})
+		if err != nil {
+			panic(signals.ErrSignal.WithCause(err).Wrap(
+				"error during initialization of client",
+			))
+		}
+		return
+	}
+
 	if r.Exit != nil {
 		panic(signals.ErrUnsupported.Wrap(
 			"Pool.Loop() can only be called when in the stopped state",
@@ -248,7 +310,7 @@ loop:
 			}
 
 		case <-ctx.Done():
-			r.callErr(ctx.Err())
+			r.callErr(ctx, ctx.Err())
 			break loop
 
 		case <-r.Exit:
@@ -264,8 +326,8 @@ loop:
 	r.Mu.Unlock()
 }
 
-func (r *Pool) callErr(err error) {
-	r.onErr((*Pool)(r), err)
+func (r *Pool) callErr(ctx context.Context, err error) {
+	r.onErr(ctx, (*Pool)(r), err)
 }
 
 func (r *Pool) doWork(ctx context.Context) (stop bool) {
@@ -281,12 +343,7 @@ func (r *Pool) doWork(ctx context.Context) (stop bool) {
 	for _, key := range keys {
 		r.Mu.RLock()
 		sub, ok := r.subscribers[key]
-		if !ok {
-			r.Mu.RUnlock()
-			continue
-		}
-
-		if sub.receivers == nil || sub.receivers.Length() == 0 {
+		if !ok || sub.pubsub == nil || sub.receivers == nil || sub.receivers.Length() == 0 {
 			r.Mu.RUnlock()
 			continue
 		}
@@ -317,7 +374,7 @@ func (r *Pool) doWork(ctx context.Context) (stop bool) {
 			}
 
 			if err := ctx.Err(); err != nil {
-				r.callErr(err)
+				r.callErr(ctx, err)
 				return true
 			}
 
@@ -329,14 +386,14 @@ func (r *Pool) doWork(ctx context.Context) (stop bool) {
 
 			msg, val, err := r.decodeMessage(ctx, sig.MsgType(), payload)
 			if err != nil {
-				r.callErr(err)
+				r.callErr(ctx, err)
 				return true
 			}
 
 			newCtx := pubsub.ContextWithMessage(ctx, msg)
 
 			// cast to [pubsub.ProcessorBasePool] to gain access to unexported method
-			go (*pubsub.ProcessorBasePool)(&r.BasePool).
+			go (*pubsub.ProcessorBasePool)(r.BasePool).
 				ProcessReceivers(newCtx, sig, sub._cached, val, r.callErr)
 		}
 	}
@@ -368,10 +425,34 @@ func (r *Pool) connect[T any](ctx context.Context, signal string, recv signals.R
 	sub := r.newSub(signal, true)
 
 	newPubSub := sub.pubsub == nil
-	if newPubSub {
-		sub.pubsub, err = r.Client().Subscribe(ctx, signal)
+	if !newPubSub {
+		// immediately return
+		// subscriber was already initialized
+		if re, ok := recv.(*receiver[T]); ok {
+			sub.add((*wrappedReceiver[T])(re))
+		} else {
+			sub.add(new(ifaceReceiver[T]{recv}))
+		}
+		return nil
 	}
 
+	if r.BasePool.ClientWasSetup() {
+		var c pubsub.PubSub
+		c, err = r.Client(ctx)
+		if err != nil {
+			return err
+		}
+
+		sub.pubsub, err = c.Subscribe(ctx, signal)
+	} else {
+		err = r.BasePool.OnClientInit(ctx, func(ctx context.Context, c pubsub.PubSub) error {
+			sub.pubsub, err = c.Subscribe(ctx, signal)
+			return err
+		})
+	}
+
+	// immediately return
+	// subscriber was already initialized
 	if re, ok := recv.(*receiver[T]); ok {
 		sub.add((*wrappedReceiver[T])(re))
 	} else {
@@ -473,7 +554,12 @@ func (r *Pool) newMessage[T any](ctx context.Context, topic string, value T) (me
 		message.Meta = make(map[string]any)
 	}
 
-	if maker, ok := r.Client().(pubsub.PubSubMsgMaker); ok {
+	c, err := r.Client(ctx)
+	if err != nil {
+		return message, err
+	}
+
+	if maker, ok := c.(pubsub.PubSubMsgMaker); ok {
 		message = maker.MakeMessage(ctx, topic, message, true)
 	}
 
