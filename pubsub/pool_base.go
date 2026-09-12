@@ -13,11 +13,26 @@ import (
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
 )
 
-type RWLocker interface {
-	sync.Locker
-	RLock()
-	RUnlock()
-}
+const (
+	bpf_none     uint32 = iota
+	bpf_wasSetup uint32 = 1 << iota
+	bpf_autoInit
+	bpf_clientBound
+)
+
+//
+//	type recusionContext int // zero value is context key
+//
+//	func deeper(ctx context.Context) context.Context {
+//		c, _ := ctx.Value(recusionContext(0)).(recusionContext)
+//		c++
+//		return context.WithValue(ctx, recusionContext(0), c)
+//	}
+//
+//	func depthViolated(ctx context.Context, depth int) bool {
+//		c, _ := ctx.Value(recusionContext(0)).(recusionContext)
+//		return c >= recusionContext(depth)
+//	}
 
 type ProcessorBasePool BasePool
 
@@ -25,8 +40,24 @@ func (p *ProcessorBasePool) ProcessReceivers[T any](ctx context.Context, sig sig
 	(*BasePool)(p).processReceivers(ctx, sig, receivers, val, callErr)
 }
 
+type clientSetup struct {
+	// the underlying interface that handles
+	// data transmission and retrieval
+	client     PubSub
+	_getClient func(context.Context) PubSub
+
+	// prevent races during initialization
+	cmu   sync.Mutex
+	flags atomic.Uint32
+
+	// handle lazy initialisation of the client.
+	onClientInit []func(context.Context, PubSub) error
+}
+
 type BasePool struct {
-	Mu RWLocker
+	cs clientSetup
+
+	Mu *sync.RWMutex
 
 	// inst provides the instance ID for this pool object.
 	//
@@ -38,16 +69,6 @@ type BasePool struct {
 	//
 	// the default encoder is JSON.
 	Encoder encoder.Encoder
-
-	// the underlying interface that handles
-	// data transmission and retrieval
-	client     PubSub
-	_getClient func(context.Context) PubSub
-
-	wasSetup atomic.Bool
-
-	// handle lazy initialisation of the client.
-	onClientInit []func(context.Context, PubSub) error
 
 	// channel for running in synchronous mode with WaitLoop
 	//
@@ -75,26 +96,26 @@ type BasePool struct {
 	backref ChannelBinder
 }
 
-func NewBasePool(pubsub any) *BasePool {
+func NewBasePool(clientCtx context.Context, pubsub any) *BasePool {
 	pool := &BasePool{
 		Mu: &sync.RWMutex{},
 	}
 
 	switch c := pubsub.(type) {
 	case PubSub:
-		pool.client = c
+		pool.cs.client = c
 
 	case func() PubSub:
-		pool._getClient = func(ctx context.Context) PubSub {
+		pool.cs._getClient = func(ctx context.Context) PubSub {
 			return c()
 		}
 	case func(context.Context) PubSub:
-		pool._getClient = func(ctx context.Context) PubSub {
+		pool.cs._getClient = func(ctx context.Context) PubSub {
 			return c(ctx)
 		}
 
 	case func(context.Context, ChannelBinder) PubSub:
-		pool._getClient = func(ctx context.Context) PubSub {
+		pool.cs._getClient = func(ctx context.Context) PubSub {
 			return c(ctx, pool.backref)
 		}
 
@@ -106,22 +127,37 @@ func NewBasePool(pubsub any) *BasePool {
 }
 
 func (r *BasePool) ClientWasSetup() bool {
-	return r.client != nil
+	return r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup
 }
 
 func (r *BasePool) OnClientInit(ctx context.Context, fn func(context.Context, PubSub) error) error {
-	if r.ClientWasSetup() {
-		return fn(ctx, r.client)
+
+	// fast path check
+	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
+		return fn(ctx, r.cs.client)
 	}
-	r.onClientInit = append(r.onClientInit, fn)
+
+	r.cs.cmu.Lock()
+
+	// slow path check
+	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
+		r.cs.cmu.Unlock()
+		return fn(ctx, r.cs.client)
+	}
+
+	r.cs.onClientInit = append(r.cs.onClientInit, fn)
+	r.cs.cmu.Unlock()
 	return nil
+}
+
+func (r *BasePool) WithAutoInitClient(b bool) {
 }
 
 func (r *BasePool) WithReference(ref ChannelBinder) {
 	r.backref = ref
 }
 
-func (r *BasePool) Initialize() {
+func (r *BasePool) Initialize(ctx context.Context) error {
 	if r.Encoder == nil {
 		r.Encoder = encoder.NewJSONEncoder()
 	}
@@ -133,50 +169,28 @@ func (r *BasePool) Initialize() {
 	if (r.Inst == uuid.UUID{}) {
 		r.Inst = uuid.New()
 	}
+
+	if r.cs.client != nil || r.cs.flags.Load()&bpf_autoInit == bpf_autoInit {
+		return r.setupClient(ctx)
+	}
+
+	return nil
 }
 
 func (r *BasePool) ID() uuid.UUID {
 	return r.Inst
 }
 
-func (r *BasePool) setupClient(ctx context.Context) error {
-	if r.client != nil && r.wasSetup.Load() {
-		return nil
-	}
-
-	if r.client == nil && r._getClient == nil {
-		panic("client is nil and _getClient is nil, cannot setup")
-	}
-
-	if r.client == nil && r._getClient != nil {
-		r.client = r._getClient(ctx)
-	}
-
-	r.wasSetup.Store(true)
-
-	if b, ok := r.client.(PubSubBinder); ok {
-		b.BindChannel(ctx, r)
-	}
-
-	for _, fn := range r.onClientInit {
-		if err := fn(ctx, r.client); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func (r *BasePool) MustClient(ctx context.Context) PubSub {
 	if err := r.setupClient(ctx); err != nil {
 		panic(fmt.Errorf("error initialising client: %w", err))
 	}
-	return r.client
+	return r.cs.client
 }
 
 func (r *BasePool) Client(ctx context.Context) (PubSub, error) {
 	err := r.setupClient(ctx)
-	return r.client, err
+	return r.cs.client, err
 }
 
 func (r *BasePool) SetChannel(ctx context.Context, ch chan Message) {
@@ -213,4 +227,52 @@ func (r *BasePool) decodeMessage[T any](_ context.Context, data []byte) (msg *Me
 	}
 
 	return payload, *val, err
+}
+
+func (r *BasePool) setupClient(ctx context.Context) error {
+	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
+		return nil
+	}
+
+	//ctx = deeper(ctx)
+	//
+	//if depthViolated(ctx, 3) {
+	//	panic(fmt.Sprintf("recursion detected: %s", string(debug.Stack())))
+	//}
+
+	r.cs.cmu.Lock()
+	defer r.cs.cmu.Unlock()
+
+	// re-verify after lock
+	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
+		return nil
+	}
+
+	if r.cs.client == nil && r.cs._getClient == nil {
+		panic("client is nil and _getClient is nil, cannot setup")
+	}
+
+	// ensure this is only ran once
+	if r.cs.flags.Load()&bpf_clientBound != bpf_clientBound {
+		if r.cs.client == nil && r.cs._getClient != nil {
+			r.cs.client = r.cs._getClient(ctx)
+			r.cs._getClient = nil
+		}
+
+		if b, ok := r.cs.client.(PubSubBinder); ok {
+			b.BindChannel(ctx, r)
+		}
+
+		r.cs.flags.Or(bpf_clientBound)
+	}
+
+	for _, fn := range r.cs.onClientInit {
+		if err := fn(ctx, r.cs.client); err != nil {
+			return err
+		}
+	}
+
+	r.cs.flags.Or(bpf_wasSetup)
+
+	return nil
 }

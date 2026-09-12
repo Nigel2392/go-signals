@@ -36,9 +36,9 @@ func defaultPoolError[T any](ctx context.Context, p *Pool[T], err error) {
 	log.Printf("error in pool %T: %v", p.MustClient(ctx), err)
 }
 
-func New[T any](pubsub any, opts ...PoolOption) *Pool[T] {
+func New[T any](clientCtx context.Context, pubsub any, opts ...PoolOption) *Pool[T] {
 	pool := &Pool[T]{
-		BasePool:    NewBasePool(pubsub),
+		BasePool:    NewBasePool(clientCtx, pubsub),
 		signals:     make(map[string]*signal[T]),
 		subscribers: make(map[string]*subscriber[T]),
 	}
@@ -49,7 +49,10 @@ func New[T any](pubsub any, opts ...PoolOption) *Pool[T] {
 		opt((*Pool[T])(pool))
 	}
 
-	pool.BasePool.Initialize()
+	err := pool.BasePool.Initialize(clientCtx)
+	if err != nil {
+		panic(err)
+	}
 
 	if pool.onErr == nil {
 		pool.onErr = defaultPoolError
@@ -59,7 +62,7 @@ func New[T any](pubsub any, opts ...PoolOption) *Pool[T] {
 }
 
 func GoNew[T any](ctx context.Context, pubsub any, opts ...PoolOption) *Pool[T] {
-	pool := New[T](pubsub, opts...)
+	pool := New[T](ctx, pubsub, opts...)
 	err := pool.BasePool.OnClientInit(ctx, pool.goNew)
 	if err != nil {
 		panic(err)
@@ -137,18 +140,15 @@ func (r *Pool[T]) Close() {
 }
 
 func (r *Pool[T]) NewSignal(_ context.Context, name string) signals.Signal[T] {
-	r.Mu.RLock()
+	r.Mu.Lock()
+	defer r.Mu.Unlock()
 	sig, ok := r.signals[name]
-	r.Mu.RUnlock()
-
 	if !ok {
 		// slower, but ok.
 		// signal creation is meant to be done in the init phase,
 		// although it can be done thoughout program lifecycle.
-		r.Mu.Lock()
 		sig = &signal[T]{name, r}
 		r.signals[name] = sig
-		r.Mu.Unlock()
 	}
 
 	return sig
@@ -170,7 +170,6 @@ func (r *Pool[T]) NewSignal(_ context.Context, name string) signals.Signal[T] {
 //
 // Using this function is also great for benchmarking, as it isnt reliant on the timer.
 func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[T], error] {
-
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
@@ -184,15 +183,14 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[T], error] {
 		}
 	}
 
-	wg.Wait()
-
-	if r.Data == nil {
-		panic(signals.ErrUnsupported.Wrap(
-			"cannot call Pool.Handle without having called Pool.SetChannel",
-		))
-	}
-
 	return func(yield func(Handler[T], error) bool) {
+		wg.Wait()
+
+		if r.Data == nil {
+			panic(signals.ErrUnsupported.Wrap(
+				"cannot call Pool.Handle without having called Pool.SetChannel",
+			))
+		}
 
 		for payload := range r.Data {
 
@@ -262,18 +260,18 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[T], error] {
 
 func (r *Pool[T]) Loop(ctx context.Context) {
 
-	if !r.BasePool.ClientWasSetup() {
-		err := r.BasePool.OnClientInit(ctx, func(ctx context.Context, ps PubSub) error {
-			go r.Loop(ctx)
-			return nil
-		})
-		if err != nil {
-			panic(signals.ErrSignal.WithCause(err).Wrap(
-				"error during initialization of client",
-			))
-		}
-		return
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	var err = r.BasePool.OnClientInit(ctx, func(ctx context.Context, ps PubSub) error {
+		wg.Done()
+		return nil
+	})
+	if err != nil {
+		panic(err)
 	}
+
+	wg.Wait()
 
 	if r.Exit != nil {
 		panic(signals.ErrUnsupported.Wrap(
@@ -387,46 +385,29 @@ func (r *Pool[T]) doWork(ctx context.Context) (stop bool) {
 	return false
 }
 
-func (r *Pool[T]) newSub(signal string, createIfNotExists bool) *subscriber[T] {
+func (r *Pool[T]) newSub(signal string, createIfNotExists bool) (*subscriber[T], bool) {
 	s, ok := r.subscribers[signal]
 	if ok {
-		return s
+		return s, false
 	}
 
 	if !createIfNotExists {
-		return nil
+		return nil, false
 	}
 
 	s = &subscriber[T]{
 		receivers: omap.NewOrderedMap(0, signals.Receiver[T].ID),
 	}
 	r.subscribers[signal] = s
-	return s
+	return s, true
 }
 
 func (r *Pool[T]) connect(ctx context.Context, signal string, recv signals.Receiver[T]) (err error) {
 	r.Mu.Lock()
 	defer r.Mu.Unlock()
 
-	sub := r.newSub(signal, true)
-
-	newPubSub := sub.pubsub == nil
-	if !newPubSub {
-		// immediately return
-		// subscriber was already initialized
-		sub.add(recv)
-		return nil
-	}
-
-	if r.BasePool.ClientWasSetup() {
-		var c PubSub
-		c, err = r.Client(ctx)
-		if err != nil {
-			return err
-		}
-
-		sub.pubsub, err = c.Subscribe(ctx, signal)
-	} else {
+	sub, isNew := r.newSub(signal, true)
+	if isNew {
 		err = r.BasePool.OnClientInit(ctx, func(ctx context.Context, c PubSub) error {
 			sub.pubsub, err = c.Subscribe(ctx, signal)
 			return err
@@ -448,7 +429,7 @@ func (r *Pool[T]) clear(ctx context.Context, signal string) error {
 	r.Mu.Lock()
 	defer r.Mu.Unlock()
 
-	sub := r.newSub(signal, false)
+	sub, _ := r.newSub(signal, false)
 	if sub == nil || sub.receivers == nil || sub.receivers.Length() == 0 {
 		return nil
 	}
@@ -478,7 +459,7 @@ func (r *Pool[T]) disconnect(ctx context.Context, sig *signal[T], recv signals.R
 	r.Mu.Lock()
 	defer r.Mu.Unlock()
 
-	sub := r.newSub(sig.name, false)
+	sub, _ := r.newSub(sig.name, false)
 	if sub == nil || sub.receivers == nil || sub.receivers.Length() == 0 {
 		return nil
 	}

@@ -15,11 +15,11 @@ func TestPoolInternalState(t *testing.T) {
 	customErrFn := func(ctx context.Context, p *Pool[string], err error) {
 	}
 
-	pool := New[string](client, PoolOnError(customErrFn))
+	pool := New[string](t.Context(), client, PoolOnError(customErrFn))
 
 	// Initial State Validation
 	t.Run("InitialState", func(t *testing.T) {
-		if pool.client != client {
+		if pool.cs.client != client {
 			t.Errorf("expected client to be set")
 		}
 		if pool.signals == nil || len(pool.signals) != 0 {
@@ -97,7 +97,7 @@ func TestPoolInternalState(t *testing.T) {
 
 func TestPoolWaitLoop(t *testing.T) {
 	client := NewMockPubSub(false)
-	pool := New[string](client)
+	pool := New[string](t.Context(), client)
 
 	pool.MustClient(t.Context())
 
@@ -154,7 +154,7 @@ func TestPoolWaitLoop(t *testing.T) {
 
 func TestPoolLoop(t *testing.T) {
 	client := NewMockPubSub(true)
-	pool := New[string](client, PoolTickTime(10*time.Millisecond))
+	pool := New[string](t.Context(), client, PoolTickTime(10*time.Millisecond))
 
 	sig := pool.NewSignal(context.Background(), "test_topic")
 
@@ -192,7 +192,7 @@ func TestPoolLoop(t *testing.T) {
 
 func TestPool_SubscriberCache(t *testing.T) {
 	client := NewMockPubSub(true)
-	pool := New[string](client)
+	pool := New[string](t.Context(), client)
 
 	sig := pool.NewSignal(context.Background(), "test_topic")
 
@@ -233,7 +233,7 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	client := NewMockPubSub(true)
 
 	var lastErr error
-	pool := New[string](client, PoolOnError(func(ctx context.Context, p *Pool[string], err error) {
+	pool := New[string](t.Context(), client, PoolOnError(func(ctx context.Context, p *Pool[string], err error) {
 		lastErr = err
 	}))
 

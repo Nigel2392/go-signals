@@ -25,6 +25,7 @@ func BenchmarkSignals(b *testing.B) {
 	b.StopTimer()
 
 	pool := New[string](
+		b.Context(),
 		func() PubSub {
 			return NewMockPubSub(false)
 		},
@@ -82,7 +83,7 @@ func BenchmarkSignals(b *testing.B) {
 
 func TestSignalSend(t *testing.T) {
 	client := NewMockPubSub(true)
-	pool := New[string](client)
+	pool := New[string](t.Context(), client)
 
 	sig := pool.NewSignal(context.Background(), "test_topic")
 
@@ -98,7 +99,7 @@ func TestSignalSend(t *testing.T) {
 
 func TestSignalSendAsync(t *testing.T) {
 	client := NewMockPubSub(true)
-	pool := New[string](client)
+	pool := New[string](t.Context(), client)
 
 	sig := pool.NewSignal(context.Background(), "test_topic")
 
@@ -116,7 +117,7 @@ func TestSignalSendAsync(t *testing.T) {
 
 func TestSignalConnectListenDisconnect(t *testing.T) {
 	client := NewMockPubSub(true)
-	pool := New[string](client)
+	pool := New[string](t.Context(), client)
 
 	sig := pool.NewSignal(context.Background(), "test_topic")
 
@@ -172,7 +173,7 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 
 func TestSignalClear(t *testing.T) {
 	client := NewMockPubSub(true)
-	pool := New[string](client)
+	pool := New[string](t.Context(), client)
 
 	sig := pool.NewSignal(context.Background(), "test_topic")
 

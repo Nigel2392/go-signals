@@ -95,7 +95,7 @@ func ContextWithBatchSize(ctx context.Context, size int) context.Context {
 }
 
 func BatchSize(ctx context.Context) int {
-	if bs, ok := ctx.Value(batchSizeContextKey{}).(int); ok {
+	if bs, ok := ctx.Value(batchSizeContextKey{}).(int); ok && bs > 0 {
 		return bs
 	}
 	return DEFAULT_BATCH_SIZE

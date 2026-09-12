@@ -12,6 +12,7 @@ type ConfigPool interface {
 	WithEncoder(encoder.Encoder)
 	WithTickDuration(time.Duration)
 	WithInstanceID(uuid.UUID)
+	WithAutoInitClient(bool)
 }
 
 type ConfigErrPool[POOLTYPE ConfigErrPool[POOLTYPE]] interface {
@@ -36,6 +37,12 @@ func PoolOnError[POOLTYPE ConfigErrPool[POOLTYPE]](fn func(context.Context, POOL
 func PoolTickTime(tickTime time.Duration) PoolOption {
 	return func(p ConfigPool) {
 		p.WithTickDuration(tickTime)
+	}
+}
+
+func PoolClientInit(b bool) PoolOption {
+	return func(p ConfigPool) {
+		p.WithAutoInitClient(b)
 	}
 }
 

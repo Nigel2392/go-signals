@@ -41,6 +41,7 @@ func BenchmarkSignals(b *testing.B) {
 	}
 
 	pool := pubsub.New[string](
+		b.Context(),
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -101,6 +102,7 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 	}
 
 	pool := pubsub2.New(
+		b.Context(),
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -160,6 +162,7 @@ func TestSignalsSynchronous(t *testing.T) {
 	}
 
 	pool := pubsub.New[string](
+		t.Context(),
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -221,6 +224,7 @@ func TestPoolSend(t *testing.T) {
 	)
 
 	redisPool := pubsub.New[MyType](
+		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -344,6 +348,7 @@ func TestMultiplePoolsSend(t *testing.T) {
 	)
 
 	redisPool1 := pubsub.New[MyType](
+		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -393,9 +398,11 @@ func TestMultiplePoolsSend(t *testing.T) {
 
 	// These SHOULD activate
 	redisPool2 := pubsub.New[MyType](
+		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
+		// pubsub.PoolClientInit(true),
 		pubsub.PoolTickTime(time.Millisecond),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
@@ -480,6 +487,7 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 	)
 
 	redisPool1 := pubsub2.New(
+		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -529,6 +537,7 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 
 	// These SHOULD activate
 	redisPool2 := pubsub2.New(
+		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -616,6 +625,7 @@ func TestPoolContextErr(t *testing.T) {
 	)
 
 	redisPool := pubsub.New[MyType](
+		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -652,9 +662,11 @@ func TestPoolContextErr(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
+	mu.Lock()
 	if len(typeList) != 0 {
 		t.Errorf("Expected 4 items in typeList, got %d: %v", len(typeList), typeList)
 	}
+	defer mu.Unlock()
 
 	select {
 	case err, ok := <-errCh:
@@ -689,6 +701,7 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 	)
 
 	pool := pubsub.New[string](
+		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -758,6 +771,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 	)
 
 	pool := pubsub.New[string](
+		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -829,6 +843,7 @@ func TestSendAsync(t *testing.T) {
 	)
 
 	pool := pubsub.New[string](
+		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),

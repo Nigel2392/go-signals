@@ -19,7 +19,7 @@ type MinimalClient interface {
 
 // PubSub creates a new Redis PubSub client.
 // If async is false, it allocates a channel to bind to the Pool's WaitLoop.
-func PubSub(async bool, c any) pubsub.PubSub {
+func PubSub(async bool, c any) any {
 	var ch chan pubsub.Message
 	if !async {
 		ch = make(chan pubsub.Message)
@@ -32,10 +32,13 @@ func PubSub(async bool, c any) pubsub.PubSub {
 	switch v := c.(type) {
 	case func() *redis.Client:
 		rps._clientFn = func() MinimalClient { return v() }
+		return func() pubsub.PubSub { return rps }
 	case func() redis.UniversalClient:
 		rps._clientFn = func() MinimalClient { return v() }
+		return func() pubsub.PubSub { return rps }
 	case func() MinimalClient:
 		rps._clientFn = v
+		return func() pubsub.PubSub { return rps }
 	case MinimalClient:
 		rps._client = v
 	default:

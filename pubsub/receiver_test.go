@@ -9,7 +9,7 @@ import (
 
 func TestReceiver(t *testing.T) {
 	client := NewMockPubSub(true)
-	pool := New[string](client)
+	pool := New[string](t.Context(), client)
 
 	sig := pool.NewSignal(context.Background(), "test_topic")
 
