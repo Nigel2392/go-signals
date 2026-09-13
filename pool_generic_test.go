@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strconv"
+	"sync/atomic"
 	"testing"
-	"time"
+	"uuid"
 
 	"github.com/Nigel2392/go-signals"
 )
@@ -15,7 +15,7 @@ import (
 var gPool = signals.NewGPool()
 
 func TestGSignals(t *testing.T) {
-	var signalID = strconv.Itoa(int(time.Now().UnixNano()))
+	var signalID = uuid.New().String()
 	var signal = gPool.Get[string](signalID)
 
 	var messages = make([]string, 0)
@@ -53,7 +53,7 @@ func TestGSignals(t *testing.T) {
 }
 
 func TestGMultiple(t *testing.T) {
-	var signal = gPool.Get[string](strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = gPool.Get[string](uuid.New().String())
 	var messages = make([]string, 0)
 	var receiver1 = signals.NewRecv(func(ctx context.Context, signal signals.Signal[string], value string) error {
 		t.Log("Signal 1 fired.")
@@ -96,7 +96,7 @@ func TestGMultiple(t *testing.T) {
 func BenchmarkGSignals(b *testing.B) {
 	b.StopTimer()
 	var incr int
-	var sigName = strconv.Itoa(int(time.Now().UnixNano()))
+	var sigName = uuid.New().String()
 	var incrFn = func(ctx context.Context, signal signals.Signal[string], value string) error {
 		incr++
 		return nil
@@ -130,7 +130,7 @@ func BenchmarkGSignalsAsync(b *testing.B) {
 	for _, size := range batchSizes {
 		b.Run(fmt.Sprintf("Batch%d", size), func(b *testing.B) {
 			b.StopTimer()
-			var signal = gPool.Get[int64](strconv.Itoa(int(time.Now().UnixNano())))
+			var signal = gPool.Get[int64](uuid.New().String())
 			// dont use atomic int, or check the value for correctness unless DEFAULT_BATCH_SIZE != 0 (i.e. build tag batches = false)
 			var incr int64
 
@@ -163,10 +163,54 @@ func BenchmarkGSignalsAsync(b *testing.B) {
 	}
 }
 
+func BenchmarkGSignalsAsyncParallel(b *testing.B) {
+	var batchSizes = []int{
+		10, 50, 100, 250, 500, 1000,
+	}
+
+	if signals.DEFAULT_BATCH_SIZE == 0 {
+		batchSizes = []int{0}
+	}
+
+	for _, size := range batchSizes {
+		b.Run(fmt.Sprintf("Batch%d", size), func(b *testing.B) {
+			b.StopTimer()
+			var signal = gPool.Get[string](uuid.New().String())
+			var incr atomic.Uint64
+
+			connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+				incr.Add(1)
+				return nil
+			})
+
+			ctx := signals.ContextWithBatchSize(b.Context(), size)
+
+			b.StartTimer()
+			b.ResetTimer()
+
+			b.RunParallel(func(p *testing.PB) {
+				for p.Next() {
+					errCh := signals.SendAsync(ctx, signal, "This is a signal message!")
+					for range errCh { // ensures that we actually wait for all receivers to finish
+					}
+				}
+			})
+
+			if testing.Verbose() {
+				b.Log(incr.Load())
+			}
+
+			if incr.Load() != uint64(TOTAL_AMOUNT*b.N) {
+				b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr.Load())
+			}
+		})
+	}
+}
+
 func TestGMany(t *testing.T) {
 	amountCount := TOTAL_AMOUNT
 
-	var signal = gPool.Get[string](strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = gPool.Get[string](uuid.New().String())
 
 	connectSignal(amountCount, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return nil })
 
@@ -271,7 +315,7 @@ func TestRangeT(t *testing.T) {
 }
 
 func TestGSendAsync(t *testing.T) {
-	var signal = gPool.Get[string](strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = gPool.Get[string](uuid.New().String())
 	var totalReceivers = TOTAL_AMOUNT
 
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
@@ -284,8 +328,15 @@ func TestGSendAsync(t *testing.T) {
 		}
 	}
 
-	if len(errs) != 1 {
-		t.Fatalf("Expected %d grouped error, got %d", 1, len(errs))
+	expectedCount := 1
+	expectedInner := totalReceivers
+	if signals.DEFAULT_BATCH_SIZE > 0 {
+		expectedCount = totalReceivers / signals.DEFAULT_BATCH_SIZE
+		expectedInner = signals.DEFAULT_BATCH_SIZE
+	}
+
+	if len(errs) != expectedCount {
+		t.Fatalf("Expected %d grouped error, got %d", expectedCount, len(errs))
 	}
 
 	err, ok := signals.SignalError(errs[0])
@@ -293,13 +344,13 @@ func TestGSendAsync(t *testing.T) {
 		t.Fatalf("Expected to retrieve signals.Error, got %T", errs[0])
 	}
 
-	if len(err.Errors) != totalReceivers {
-		t.Fatalf("Expected %d errors, got %d", totalReceivers, len(errs))
+	if len(err.Errors) != expectedInner {
+		t.Fatalf("Expected %d errors, got %d", expectedInner, len(errs))
 	}
 }
 
 func TestGManyRecv(t *testing.T) {
-	var signal = gPool.Get[string](strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = gPool.Get[string](uuid.New().String())
 	var totalReceivers = TOTAL_AMOUNT
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
 
@@ -321,7 +372,7 @@ func TestGManyRecv(t *testing.T) {
 }
 
 func TestGNestedSignals_SameSignal(t *testing.T) {
-	var signalID = strconv.Itoa(int(time.Now().UnixNano()))
+	var signalID = uuid.New().String()
 	var signal = gPool.Get[string](signalID)
 
 	var callCount int

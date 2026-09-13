@@ -44,7 +44,7 @@ func (s *wrappedReceiver[T]) Unwrap() signals.Receiver[T] {
 
 // Sets the signal on the receiver instance for later use.
 func (r *wrappedReceiver[T]) Bind(ctx context.Context, sig signals.Signal[any]) error {
-	return (*receiver[T])(r).Bind(ctx, sig.(unwrapper[*signal[T]]).Unwrap())
+	return (*receiver[T]).Bind((*receiver[T])(r), ctx, sig.(unwrapper[*signal[T]]).Unwrap())
 }
 
 // Returns the signal if there is one.
@@ -64,7 +64,7 @@ type iface struct {
 // Receives the signal object and value
 func (r *wrappedReceiver[T]) Receive(ctx context.Context, s signals.Signal[any], val any) error {
 	var ifaceVal = (*iface)(unsafe.Pointer(&s)) // ptr is [wrappedSignal], can cast to [signal]
-	return (*receiver[T])(r).Receive(ctx, (*signal[T])(ifaceVal.ptr), val.(T))
+	return (*receiver[T]).Receive((*receiver[T])(r), ctx, (*signal[T])(ifaceVal.ptr), val.(T))
 }
 
 // Disconnects the receiver from the signal.

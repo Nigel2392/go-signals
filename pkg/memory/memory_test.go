@@ -44,7 +44,7 @@ type MyType struct {
 //		)
 //
 //		var incr *atomic.Int64
-//		var signal = pool.NewSignal(b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+//		var signal = pool.NewSignal(b.Context(), uuid.New().String())
 //
 //		connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 //			incr.Add(1)
@@ -67,7 +67,6 @@ type MyType struct {
 //		}
 //	}
 func BenchmarkSignals(b *testing.B) {
-	b.StopTimer()
 
 	pool := pubsub.New[string](
 		b.Context(),
@@ -88,8 +87,6 @@ func BenchmarkSignals(b *testing.B) {
 		return nil
 	})
 
-	b.StartTimer()
-
 	var wg sync.WaitGroup
 
 	go func() {
@@ -104,16 +101,18 @@ func BenchmarkSignals(b *testing.B) {
 		}
 	}()
 
-	for b.Loop() {
-		wg.Add(1)
+	wg.Add(b.N)
+	b.ResetTimer()
 
+	for i := 0; i < b.N; i++ {
 		err := signal.Send(b.Context(), "This is a signal message!")
 		if err != nil {
 			b.Error(err)
 		}
-
-		wg.Wait()
 	}
+
+	wg.Wait()
+	b.StopTimer()
 
 	if int(incr.Load()) != (totalReceivers * b.N) {
 		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
@@ -123,7 +122,6 @@ func BenchmarkSignals(b *testing.B) {
 }
 
 func BenchmarkSignalsPubsub2(b *testing.B) {
-	b.StopTimer()
 
 	pool := pubsub2.New(
 		b.Context(),
@@ -144,8 +142,6 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 		return nil
 	})
 
-	b.StartTimer()
-
 	var wg sync.WaitGroup
 
 	go func() {
@@ -160,16 +156,18 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 		}
 	}()
 
-	for b.Loop() {
-		wg.Add(1)
+	wg.Add(b.N)
+	b.ResetTimer()
 
+	for i := 0; i < b.N; i++ {
 		err := signal.Send(b.Context(), new("This is a signal message!"))
 		if err != nil {
 			b.Error(err)
 		}
-
-		wg.Wait()
 	}
+
+	wg.Wait()
+	b.StopTimer()
 
 	if int(incr.Load()) != (totalReceivers * b.N) {
 		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
@@ -194,7 +192,7 @@ func TestSignalsSynchronous(t *testing.T) {
 
 	var incr = new(atomic.Int64)
 
-	var signal = pool.NewSignal(t.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.NewSignal(t.Context(), uuid.New().String())
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 		incr.Add(1)
 		return nil
@@ -487,7 +485,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 
 	var (
 		callCount atomic.Int64
-		signalID  = strconv.Itoa(int(time.Now().UnixNano()))
+		signalID  = uuid.New().String()
 		signal    = pool.NewSignal(t.Context(), signalID)
 	)
 
@@ -543,7 +541,7 @@ func TestSendAsync(t *testing.T) {
 
 	go pool.Loop(t.Context())
 
-	var signal = pool.NewSignal(t.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.NewSignal(t.Context(), uuid.New().String())
 
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
 

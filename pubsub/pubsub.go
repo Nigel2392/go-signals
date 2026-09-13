@@ -22,7 +22,7 @@ type Encoder = encoder.Encoder
 //
 // * `github.com/Nigel2392/go-signals/pkg/memory`
 // * `github.com/Nigel2392/go-signals/pkg/redis`
-type PubSubPool[T any] interface {
+type PubSubPool[T any, P PubSubPool[T, P]] interface {
 	signals.SignalPool[T]
 	ChannelBinder
 
@@ -39,7 +39,7 @@ type PubSubPool[T any] interface {
 	//
 	// This means that any values sent from a signal propagate as
 	// quickly as possible, only being limited by the scheduler.
-	WaitLoop(ctx context.Context) iter.Seq2[Handler[T], error]
+	WaitLoop(ctx context.Context) iter.Seq2[Handler[P, T], error]
 
 	// Send data across the pool for a topic to use.
 	//
@@ -108,6 +108,9 @@ type Message struct {
 	// Metadata belonging to the message
 	// Think of possible session information, etc.
 	Meta map[string]any
+
+	// Any error that should be transmitted
+	Error error
 }
 
 // ChannelBinder is implemented by the [Pool] type to

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/internal/omap"
+	"github.com/Nigel2392/go-signals/internal/subscriber"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
@@ -71,11 +72,11 @@ func TestPoolInternalState(t *testing.T) {
 		if !ok || sub == nil {
 			t.Fatalf("expected subscriber to be created")
 		}
-		if sub.receivers.Length() != 1 {
+		if sub.Receivers.Length() != 1 {
 			t.Errorf("expected 1 receiver in subscriber queue")
 		}
 
-		val, found := sub.receivers.Get(recv.ID())
+		val, found := sub.Receivers.Get(recv.ID())
 		if !found || TypedReceiver[string](val) != recv {
 			t.Errorf("expected receiver to be in subscriber queue")
 		}
@@ -207,25 +208,25 @@ func TestPool_SubscriberCache(t *testing.T) {
 	pool.Mu.RUnlock()
 
 	// Initial dirty flag should be true after add
-	if !sub._dirty.Load() {
+	if !sub.Dirty.Load() {
 		t.Errorf("expected subscriber to be dirty after add")
 	}
 
 	// Call checkDirty to rebuild cache
-	sub.checkDirty()
+	sub.CheckDirty()
 
-	if sub._dirty.Load() {
+	if sub.Dirty.Load() {
 		t.Errorf("expected subscriber to not be dirty after checkDirty")
 	}
 
-	if len(sub._cached) != 1 || TypedReceiver[string](sub._cached[0]) != recv {
+	if len(sub.Cached) != 1 || TypedReceiver[string](sub.Cached[0]) != recv {
 		t.Errorf("expected cached slice to contain the receiver")
 	}
 
 	// Removing the receiver should set dirty again
 	sig.Disconnect(context.Background(), recv)
 
-	if !sub._dirty.Load() {
+	if !sub.Dirty.Load() {
 		t.Errorf("expected subscriber to be dirty after delete")
 	}
 }
@@ -255,9 +256,9 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	q := omap.NewOrderedMap(0, signals.Receiver[any].ID)
 	q.Set(&wrappedReceiver[any]{id: "dummy"})
 
-	pool.subscribers["test_topic"] = &subscriber{
-		pubsub:    mockSub,
-		receivers: q,
+	pool.subscribers["test_topic"] = &subscriber.Subscriber[any]{
+		Pubsub:    mockSub,
+		Receivers: q,
 	}
 	pool.Mu.Unlock()
 

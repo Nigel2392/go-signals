@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"sync"
-
-	"github.com/Nigel2392/go-signals/internal/omap"
 )
 
 type gSignal[T any] signal[T]
@@ -39,16 +36,32 @@ func (s *gSignal[T]) Listen(ctx context.Context, fn func(context.Context, Signal
 // Can be used to store, retrieve and delete signals.
 //
 // Can also be used to send signals to receivers.
-type GPool struct {
-	mu sync.RWMutex
-	m  *omap.OrderedMap[Signal[any]]
-}
+type GPool Pool[any]
 
 // Return a new pool of signals.
 func NewGPool() *GPool {
-	return &GPool{
-		m: omap.NewOrderedMap(0, Signal[any].Name),
-	}
+	return (*GPool)(NewPool[any]())
+}
+
+// Store a signal in the pool.
+// Use .Get() to create a new signal if it does not exist.
+func (m *GPool) store(signalName string, value Signal[any]) {
+	(*Pool[any]).store((*Pool[any])(m), signalName, value)
+}
+
+// Delete a signal from the pool.
+func (m *GPool) Delete(signalName string) {
+	(*Pool[any]).Delete((*Pool[any])(m), signalName)
+}
+
+// Range over signals inside of the pool.
+func (m *GPool) Range(f func(value Signal[any]) bool) {
+	(*Pool[any]).Range((*Pool[any])(m), f)
+}
+
+// Exists checks if a signal exists in the pool.
+func (m *GPool) Exists(name string) bool {
+	return (*Pool[any]).Exists((*Pool[any])(m), name)
 }
 
 // Load a signal from the pool.
@@ -70,36 +83,8 @@ func (m *GPool) load[T any](signalName string) (value *signal[T], ok bool) {
 	return (*signal[T])(gs), true
 }
 
-// Store a signal in the pool.
-// Use .Get() to create a new signal if it does not exist.
-func (m *GPool) store(signalName string, value Signal[any]) {
-	m.mu.Lock()
-	m.m.SetK(signalName, value)
-	m.mu.Unlock()
-}
-
-// Delete a signal from the pool.
-func (m *GPool) Delete(signalName string) {
-	m.mu.Lock()
-	m.m.Delete(signalName)
-	m.mu.Unlock()
-}
-
 func (m *GPool) Size() int {
 	return m.m.Length()
-}
-
-// Range over signals inside of the pool.
-func (m *GPool) Range(f func(value Signal[any]) bool) {
-	m.mu.RLock()
-	sigs := slices.Clone(m.m.List())
-	m.mu.RUnlock()
-
-	for _, value := range sigs {
-		if !f(value) {
-			break
-		}
-	}
 }
 
 // Range over signals inside of the pool.
@@ -144,14 +129,6 @@ func (m *GPool) SendGlobal[T any](ctx context.Context, value T) error {
 		return err == nil
 	})
 	return err
-}
-
-// Exists checks if a signal exists in the pool.
-func (m *GPool) Exists(name string) bool {
-	m.mu.RLock()
-	ok := m.m.Has(name)
-	m.mu.RUnlock()
-	return ok
 }
 
 func (m *GPool) NewSignal[T any](ctx context.Context, name string) Signal[T] {

@@ -4,15 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"testing"
-	"time"
+	"uuid"
 
 	"github.com/Nigel2392/go-signals"
 )
 
 func TestGlobalGSignals(t *testing.T) {
-	var signalID = strconv.Itoa(int(time.Now().UnixNano()))
+	var signalID = uuid.New().String()
 	var signal = signals.Get[string](signalID)
 
 	var messages = make([]string, 0)
@@ -50,7 +49,7 @@ func TestGlobalGSignals(t *testing.T) {
 }
 
 func TestGlobalGMultiple(t *testing.T) {
-	var signalName = strconv.Itoa(int(time.Now().UnixNano()))
+	var signalName = uuid.New().String()
 	var messages = make([]string, 0)
 	var receiver1, _ = signals.Listen(t.Context(), signalName, func(ctx context.Context, signal signals.Signal[string], value string) error {
 		t.Log("Signal 1 fired.")
@@ -90,7 +89,7 @@ func TestGlobalGMultiple(t *testing.T) {
 
 func BenchmarkGlobalGSignals(b *testing.B) {
 	b.StopTimer()
-	var signal = signals.Get[string](strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = signals.Get[string](uuid.New().String())
 	var incr int
 
 	connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
@@ -110,6 +109,8 @@ func BenchmarkGlobalGSignals(b *testing.B) {
 	}
 }
 
+var receiverAmounts = []int{TOTAL_AMOUNT / 8, TOTAL_AMOUNT / 4, TOTAL_AMOUNT / 2, TOTAL_AMOUNT}
+
 func BenchmarkGlobalGSignalsAsync(b *testing.B) {
 	var batchSizes = []int{
 		10, 50, 100, 250, 500, 1000,
@@ -117,48 +118,51 @@ func BenchmarkGlobalGSignalsAsync(b *testing.B) {
 
 	if signals.DEFAULT_BATCH_SIZE == 0 {
 		batchSizes = []int{0}
+		receiverAmounts = []int{TOTAL_AMOUNT}
 	}
 
-	for _, size := range batchSizes {
-		b.Run(fmt.Sprintf("Batch%d", size), func(b *testing.B) {
-			b.StopTimer()
-			var signal = signals.Get[int64](strconv.Itoa(int(time.Now().UnixNano())))
-			// dont use atomic int, or check the value for correctness unless DEFAULT_BATCH_SIZE != 0 (i.e. build tag batches = false)
-			var incr int64
+	for _, amount := range receiverAmounts {
+		for _, size := range batchSizes {
+			b.Run(fmt.Sprintf("Batch%d/%d", size, amount), func(b *testing.B) {
+				b.StopTimer()
+				var signal = signals.Get[int64](uuid.New().String())
+				// dont use atomic int, or check the value for correctness unless DEFAULT_BATCH_SIZE != 0 (i.e. build tag batches = false)
+				var incr int64
 
-			connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[int64], value int64) error {
-				incr += value
-				return nil
-			})
+				connectSignal(amount, signal, func(ctx context.Context, signal signals.Signal[int64], value int64) error {
+					incr += value
+					return nil
+				})
 
-			ctx := signals.ContextWithBatchSize(b.Context(), size)
+				ctx := signals.ContextWithBatchSize(b.Context(), size)
 
-			b.StartTimer()
-			b.ResetTimer()
+				b.StartTimer()
+				b.ResetTimer()
 
-			for b.Loop() {
+				for b.Loop() {
 
-				errCh := signals.SendAsync(ctx, signal, 1)
-				for range errCh { // ensures that we actually wait for all receivers to finish
+					errCh := signals.SendAsync(ctx, signal, 1)
+					for range errCh { // ensures that we actually wait for all receivers to finish
+					}
+
 				}
 
-			}
+				if testing.Verbose() {
+					b.Log(incr)
+				}
 
-			if testing.Verbose() {
-				b.Log(incr)
-			}
-
-			if signals.DEFAULT_BATCH_SIZE == 0 && incr != int64(TOTAL_AMOUNT*b.N) {
-				b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr)
-			}
-		})
+				if signals.DEFAULT_BATCH_SIZE == 0 && incr != int64(amount*b.N) {
+					b.Fatalf("incr should be %d, got %d", amount*b.N, incr)
+				}
+			})
+		}
 	}
 }
 
 func TestGlobalGMany(t *testing.T) {
 	amountCount := TOTAL_AMOUNT
 
-	var signal = signals.Get[string](strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = signals.Get[string](uuid.New().String())
 
 	connectSignal(amountCount, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return nil })
 
@@ -168,7 +172,7 @@ func TestGlobalGMany(t *testing.T) {
 }
 
 func TestGlobalGSendAsync(t *testing.T) {
-	var signal = signals.Get[string](strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = signals.Get[string](uuid.New().String())
 	var totalReceivers = TOTAL_AMOUNT
 
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
@@ -181,8 +185,15 @@ func TestGlobalGSendAsync(t *testing.T) {
 		}
 	}
 
-	if len(errs) != 1 {
-		t.Fatalf("Expected %d grouped error, got %d", 1, len(errs))
+	expectedCount := 1
+	expectedInner := totalReceivers
+	if signals.DEFAULT_BATCH_SIZE > 0 {
+		expectedCount = totalReceivers / signals.DEFAULT_BATCH_SIZE
+		expectedInner = signals.DEFAULT_BATCH_SIZE
+	}
+
+	if len(errs) != expectedCount {
+		t.Fatalf("Expected %d grouped error, got %d", expectedCount, len(errs))
 	}
 
 	err, ok := signals.SignalError(errs[0])
@@ -190,13 +201,13 @@ func TestGlobalGSendAsync(t *testing.T) {
 		t.Fatalf("Expected to retrieve signals.Error, got %T", errs[0])
 	}
 
-	if len(err.Errors) != totalReceivers {
-		t.Fatalf("Expected %d errors, got %d", totalReceivers, len(errs))
+	if len(err.Errors) != expectedInner {
+		t.Fatalf("Expected %d errors, got %d", expectedInner, len(errs))
 	}
 }
 
 func TestGlobalGManyRecv(t *testing.T) {
-	var signal = signals.Get[string](strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = signals.Get[string](uuid.New().String())
 	var totalReceivers = TOTAL_AMOUNT
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
 
@@ -218,7 +229,7 @@ func TestGlobalGManyRecv(t *testing.T) {
 }
 
 func TestGlobalGNestedSignals_SameSignal(t *testing.T) {
-	var signalID = strconv.Itoa(int(time.Now().UnixNano()))
+	var signalID = uuid.New().String()
 	var signal = signals.Get[string](signalID)
 
 	var callCount int

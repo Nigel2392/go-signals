@@ -5,18 +5,7 @@ import (
 	"reflect"
 
 	"github.com/Nigel2392/go-signals"
-	"github.com/Nigel2392/go-signals/pubsub"
 )
-
-// The PubSubPool is the interface that [Pool] implements.
-//
-// It allows for easily implementing and using a subscribe- publish pattern.
-//
-// Current backends for this functionality are implemented in:
-//
-// * `github.com/Nigel2392/go-signals/pkg/memory`
-// * `github.com/Nigel2392/go-signals/pkg/redis`
-type PubSubPool pubsub.PubSubPool[any]
 
 type PoolSignal interface {
 	MsgType() reflect.Type

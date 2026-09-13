@@ -7,19 +7,19 @@ import (
 	"github.com/Nigel2392/go-signals"
 )
 
-type Handler[T any] struct {
+type Handler[POOLTYPE any, T any] struct {
 	Value         T
 	Signal        signals.Signal[T]
 	Receivers     []signals.Receiver[T]
 	ReceiversIter iter.Seq[signals.Receiver[T]]
 	Message       *Message
 
-	basePool *BasePool
+	basePool *BasePool[POOLTYPE]
 	// process sync.Once
 }
 
-func NewHandler[T any](basePool *BasePool) Handler[T] {
-	return Handler[T]{
+func NewHandler[POOLTYPE any, T any](basePool *BasePool[POOLTYPE]) Handler[POOLTYPE, T] {
+	return Handler[POOLTYPE, T]{
 		basePool: basePool,
 	}
 }
@@ -28,7 +28,7 @@ func NewHandler[T any](basePool *BasePool) Handler[T] {
 //
 // Allows for changing the value before it is sent to the receivers, as well as providing
 // a custom [context.Context] with a possible deadline
-func (r Handler[T]) Process(ctx context.Context) error {
+func (r Handler[P, T]) Process(ctx context.Context) error {
 	var errs []error
 	// var mu sync.Mutex
 	// r.process.Do(func() {

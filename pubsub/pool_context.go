@@ -57,12 +57,12 @@ func contextWithPool(ctx context.Context, pool any) context.Context {
 	return context.WithValue(ctx, poolContextKey, pool)
 }
 
-func ContextWithPool[POOLTYPE any](ctx context.Context, pool *POOLTYPE) context.Context {
+func ContextWithPool[POOLTYPE any](ctx context.Context, pool POOLTYPE) context.Context {
 	return contextWithPool(ctx, pool)
 }
 
-func MsgMetaFromContext[POOLTYPE any](ctx context.Context, pool *POOLTYPE) (meta map[string]any) {
-	var v, _ = ctx.Value(messageMetaContextKey).(func(context.Context, *POOLTYPE) map[string]any)
+func MsgMetaFromContext[POOLTYPE any](ctx context.Context, pool POOLTYPE) (meta map[string]any) {
+	var v, _ = ctx.Value(messageMetaContextKey).(func(context.Context, POOLTYPE) map[string]any)
 	if v != nil {
 		meta = v(ctx, pool)
 	}

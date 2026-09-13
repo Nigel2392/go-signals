@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"reflect"
+	"unsafe"
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
@@ -12,8 +13,8 @@ import (
 )
 
 var (
-	_ signals.SignalPool[int] = (*TPool[int])(nil)
-	_ pubsub.PubSubPool[int]  = (*TPool[int])(nil)
+	_ signals.SignalPool[int]             = (*TPool[int])(nil)
+	_ pubsub.PubSubPool[int, *TPool[int]] = (*TPool[int])(nil)
 )
 
 type TPool[T any] Pool
@@ -32,12 +33,14 @@ func (r *TPool[T]) Loop(ctx context.Context) {
 func (r *TPool[T]) Close() {
 	(*Pool)(r).Close()
 }
-func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[T], error] {
+
+// custom waitloop handling, change from pubsub.Handler[any] to pubsub.Handler[T]
+func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool[T], T], error] {
 	chkTyp := reflect.TypeFor[T]()
 
-	return func(yield func(pubsub.Handler[T], error) bool) {
-		for handler, err := range (*Pool)(r).WaitLoop(ctx) {
-			if err != nil && !yield(pubsub.Handler[T]{}, err) {
+	return func(yield func(pubsub.Handler[*TPool[T], T], error) bool) {
+		for handler, err := range (*Pool).WaitLoop((*Pool)(r), ctx) {
+			if err != nil && !yield(pubsub.Handler[*TPool[T], T]{}, err) {
 				break
 			}
 
@@ -48,7 +51,7 @@ func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[T], er
 			}
 
 			// new handler object because the old one is of type Handler[any]
-			newHandler := pubsub.NewHandler[T](r.BasePool)
+			newHandler := pubsub.NewHandler[*TPool[T], T]((*pubsub.BasePool[*TPool[T]])(unsafe.Pointer(r.BasePool)))
 			newHandler.Value = handler.Value.(T)
 			newHandler.Message = handler.Message
 			newHandler.Signal = (*signal[T])(handler.Signal.(*wrappedSignal[T]))

@@ -12,17 +12,18 @@ import (
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/internal/omap"
+	"github.com/Nigel2392/go-signals/internal/subscriber"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
 type Pool struct {
-	*pubsub.BasePool
+	*pubsub.BasePool[*Pool]
 
 	// map of topic to signal objects
 	signals map[string]PoolSignal
 
 	// map of topic to subscribers,
-	subscribers map[string]*subscriber
+	subscribers map[string]*subscriber.Subscriber[any]
 
 	// special function to handle any
 	// errors that occur during the async/loop process
@@ -35,9 +36,9 @@ func defaultPoolError(ctx context.Context, p *Pool, err error) {
 
 func New(clientCtx context.Context, pub any, opts ...pubsub.PoolOption) *Pool {
 	pool := &Pool{
-		BasePool:    pubsub.NewBasePool(clientCtx, pub),
+		BasePool:    pubsub.NewBasePool[*Pool](clientCtx, pub),
 		signals:     make(map[string]PoolSignal),
-		subscribers: make(map[string]*subscriber),
+		subscribers: make(map[string]*subscriber.Subscriber[any]),
 	}
 
 	pool.BasePool.WithReference(pool)
@@ -90,44 +91,12 @@ func (p *Pool) goNew(ctx context.Context, _ pubsub.PubSub) error {
 	return nil
 }
 
-func (p *Pool) TPool[T any]() pubsub.PubSubPool[T] {
+func (p *Pool) TPool[T any]() *TPool[T] {
 	return (*TPool[T])(p)
 }
 
 func (p *Pool) WithOnError(fn func(context.Context, *Pool, error)) {
 	p.onErr = fn
-}
-
-func (r *Pool) Send[T any](ctx context.Context, topic string, value T) error {
-	message, err := r.newMessage(ctx, topic, value)
-	if err != nil {
-		return signals.ErrSignal.WithCause(err).Wrapf(
-			"could not encode %T with %T", value, r.Encoder,
-		)
-	}
-
-	data, err := r.Encoder.EncodeBytes(message)
-	if err != nil {
-		return signals.ErrSignal.WithCause(err).Wrapf(
-			"could not encode %T with %T", value, r.Encoder,
-		)
-	}
-
-	c, err := r.Client(ctx)
-	if err != nil {
-		return signals.ErrSignal.WithCause(err).Wrapf(
-			"could not initialize client %T", c,
-		)
-	}
-
-	err = c.Publish(ctx, topic, data)
-	if err != nil {
-		return signals.ErrSignal.WithCause(err).Wrapf(
-			"could not publish %T", value,
-		)
-	}
-
-	return nil
 }
 
 func (r *Pool) Close() {
@@ -182,7 +151,7 @@ func (r *Pool) NewSignal[T any](_ context.Context, name string) signals.Signal[T
 // quickly as possible, only being limited by the scheduler.
 //
 // Using this function is also great for benchmarking, as it isnt reliant on the timer.
-func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[any], error] {
+func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*Pool, any], error] {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
@@ -191,8 +160,8 @@ func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[any], erro
 		return nil
 	})
 	if err != nil {
-		return func(yield func(pubsub.Handler[any], error) bool) {
-			yield(pubsub.Handler[any]{}, err)
+		return func(yield func(pubsub.Handler[*Pool, any], error) bool) {
+			yield(pubsub.Handler[*Pool, any]{}, err)
 		}
 	}
 
@@ -204,9 +173,16 @@ func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[any], erro
 		))
 	}
 
-	return func(yield func(pubsub.Handler[any], error) bool) {
+	return func(yield func(pubsub.Handler[*Pool, any], error) bool) {
 
 		for payload := range r.Data {
+
+			if payload.Error != nil {
+				if !yield(pubsub.Handler[*Pool, any]{}, payload.Error) {
+					return
+				}
+				continue
+			}
 
 			// retrieve subscriber object and signal
 			r.Mu.RLock()
@@ -216,7 +192,7 @@ func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[any], erro
 				continue
 			}
 
-			if sub.pubsub == nil {
+			if sub.Pubsub == nil {
 				r.Mu.RUnlock()
 
 				panic(fmt.Sprintf(
@@ -235,11 +211,11 @@ func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[any], erro
 
 			// rebuild subscriber cache if required
 			// allows for better concurrency
-			if sub._dirty.Load() {
+			if sub.Dirty.Load() {
 				r.Mu.Lock()
-				sub._undirtify()
+				sub.Undirtify()
 				r.Mu.Unlock()
-				sub._dirty.Store(false)
+				sub.Dirty.Store(false)
 			}
 
 			// see if we should exit the loop
@@ -248,22 +224,24 @@ func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[any], erro
 			}
 
 			if err := ctx.Err(); err != nil {
-				yield(pubsub.Handler[any]{}, err)
+				yield(pubsub.Handler[*Pool, any]{}, err)
 				return
 			}
 
 			// decode value to send to receivers
 			message, val, err := r.decodeMessage(ctx, sig.MsgType(), payload.Data)
 			if err != nil {
-				yield(pubsub.Handler[any]{}, err)
-				return
+				if !yield(pubsub.Handler[*Pool, any]{}, err) {
+					return
+				}
+				continue
 			}
 
 			// process
-			handler := pubsub.NewHandler[any](r.BasePool)
+			handler := pubsub.NewHandler[*Pool, any](r.BasePool)
 			handler.Value = val
 			handler.Signal = sig
-			handler.Receivers = sub._cached
+			handler.Receivers = sub.Cached
 			handler.Message = message
 
 			if !yield(handler, nil) {
@@ -345,7 +323,7 @@ func (r *Pool) doWork(ctx context.Context) (stop bool) {
 	for _, key := range keys {
 		r.Mu.RLock()
 		sub, ok := r.subscribers[key]
-		if !ok || sub.pubsub == nil || sub.receivers == nil || sub.receivers.Length() == 0 {
+		if !ok || sub.Pubsub == nil || sub.Receivers == nil || sub.Receivers.Length() == 0 {
 			r.Mu.RUnlock()
 			continue
 		}
@@ -360,11 +338,11 @@ func (r *Pool) doWork(ctx context.Context) (stop bool) {
 
 		// rebuild subscriber cache if required
 		// allows for better concurrency
-		if sub._dirty.Load() {
+		if sub.Dirty.Load() {
 			r.Mu.Lock()
-			sub._undirtify()
+			sub.Undirtify()
 			r.Mu.Unlock()
-			sub._dirty.Store(false)
+			sub.Dirty.Store(false)
 		}
 
 	drainLoop:
@@ -381,7 +359,7 @@ func (r *Pool) doWork(ctx context.Context) (stop bool) {
 			}
 
 			// try to receive the data
-			payload, hasMessage := sub.pubsub.TryReceive()
+			payload, hasMessage := sub.Pubsub.TryReceive()
 			if !hasMessage {
 				break drainLoop // Queue empty, move to next subscriber
 			}
@@ -395,15 +373,15 @@ func (r *Pool) doWork(ctx context.Context) (stop bool) {
 			newCtx := pubsub.ContextWithMessage(ctx, msg)
 
 			// cast to [pubsub.ProcessorBasePool] to gain access to unexported method
-			go (*pubsub.ProcessorBasePool)(r.BasePool).
-				ProcessReceivers(newCtx, sig, sub._cached, val, r.callErr)
+			go (*pubsub.ProcessorBasePool[*Pool])(r.BasePool).
+				ProcessReceivers(newCtx, sig, sub.Cached, val, r.callErr)
 		}
 	}
 
 	return false
 }
 
-func (r *Pool) newSub(signal string, createIfNotExists bool) (*subscriber, bool) {
+func (r *Pool) newSub(signal string, createIfNotExists bool) (*subscriber.Subscriber[any], bool) {
 	s, ok := r.subscribers[signal]
 	if ok {
 		return s, false
@@ -413,8 +391,8 @@ func (r *Pool) newSub(signal string, createIfNotExists bool) (*subscriber, bool)
 		return nil, false
 	}
 
-	s = &subscriber{
-		receivers: omap.NewOrderedMap(0, signals.Receiver[any].ID),
+	s = &subscriber.Subscriber[any]{
+		Receivers: omap.NewOrderedMap(0, signals.Receiver[any].ID),
 	}
 	r.subscribers[signal] = s
 	return s, true
@@ -427,7 +405,7 @@ func (r *Pool) connect[T any](ctx context.Context, signal string, recv signals.R
 	sub, isNew := r.newSub(signal, true)
 	if isNew {
 		err = r.BasePool.OnClientInit(ctx, func(ctx context.Context, c pubsub.PubSub) error {
-			sub.pubsub, err = c.Subscribe(ctx, signal)
+			sub.Pubsub, err = c.Subscribe(ctx, signal)
 			return err
 		})
 	}
@@ -435,9 +413,9 @@ func (r *Pool) connect[T any](ctx context.Context, signal string, recv signals.R
 	// immediately return
 	// subscriber was already initialized
 	if re, ok := recv.(*receiver[T]); ok {
-		sub.add((*wrappedReceiver[T])(re))
+		sub.Add((*wrappedReceiver[T])(re))
 	} else {
-		sub.add(new(ifaceReceiver[T]{recv}))
+		sub.Add(new(ifaceReceiver[T]{recv}))
 	}
 
 	return err
@@ -454,11 +432,11 @@ func (r *Pool) clear(ctx context.Context, signal string) error {
 	defer r.Mu.Unlock()
 
 	sub, _ := r.newSub(signal, false)
-	if sub == nil || sub.receivers == nil || sub.receivers.Length() == 0 {
+	if sub == nil || sub.Receivers == nil || sub.Receivers.Length() == 0 {
 		return nil
 	}
 
-	for idx, recv := range sub.receivers.List() {
+	for idx, recv := range sub.Receivers.List() {
 		id := recv.ID()
 		err := recv.Disconnect(ctx)
 		if err != nil {
@@ -468,9 +446,9 @@ func (r *Pool) clear(ctx context.Context, signal string) error {
 		}
 	}
 
-	sub.clear()
+	sub.Clear()
 
-	return sub.check(signal)
+	return sub.Check(signal)
 }
 
 func (r *Pool) disconnect[T any](ctx context.Context, sig *signal[T], recv *receiver[T]) error {
@@ -484,11 +462,11 @@ func (r *Pool) disconnect[T any](ctx context.Context, sig *signal[T], recv *rece
 	defer r.Mu.Unlock()
 
 	sub, _ := r.newSub(sig.name, false)
-	if sub == nil || sub.receivers == nil || sub.receivers.Length() == 0 {
+	if sub == nil || sub.Receivers == nil || sub.Receivers.Length() == 0 {
 		return nil
 	}
 
-	didDel := sub.del((*wrappedReceiver[T])(recv))
+	didDel := sub.Del((*wrappedReceiver[T])(recv))
 	if didDel {
 		err := recv.Disconnect(ctx)
 		if err != nil {
@@ -496,7 +474,7 @@ func (r *Pool) disconnect[T any](ctx context.Context, sig *signal[T], recv *rece
 		}
 	}
 
-	return sub.check(sig.name)
+	return sub.Check(sig.name)
 }
 
 func (r *Pool) decodeMessage(_ context.Context, typ reflect.Type, data []byte) (msg *pubsub.Message, sentVal any, err error) {
@@ -513,36 +491,4 @@ func (r *Pool) decodeMessage(_ context.Context, typ reflect.Type, data []byte) (
 	}
 
 	return payload, val.Elem().Interface(), err
-}
-
-func (r *Pool) newMessage[T any](ctx context.Context, topic string, value T) (message *pubsub.Message, err error) {
-	var data []byte
-	if any(value) != nil {
-		data, err = r.Encoder.EncodeBytes(value)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	message = new(pubsub.Message{
-		Channel: topic,
-		Sender:  r.Inst,
-		Data:    data,
-		Meta:    pubsub.MsgMetaFromContext(ctx, r),
-	})
-
-	if message.Meta == nil {
-		message.Meta = make(map[string]any)
-	}
-
-	c, err := r.Client(ctx)
-	if err != nil {
-		return message, err
-	}
-
-	if maker, ok := c.(pubsub.PubSubMsgMaker); ok {
-		message = maker.MakeMessage(ctx, topic, message, true)
-	}
-
-	return message, nil
 }

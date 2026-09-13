@@ -3,11 +3,11 @@ package pubsub2
 import (
 	"context"
 	"runtime/debug"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/pubsub"
@@ -74,13 +74,13 @@ func TestTPoolWaitLoop(t *testing.T) {
 }
 
 func BenchmarkSignalsTPool(b *testing.B) {
-	b.StopTimer()
 
 	pool := New(
 		b.Context(),
 		func() pubsub.PubSub {
 			return NewMockPubSub(false)
 		},
+		pubsub.PoolClientInit(true),
 		pubsub.PoolOnError(func(ctx context.Context, p *Pool, err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
@@ -89,13 +89,11 @@ func BenchmarkSignalsTPool(b *testing.B) {
 
 	var incr = new(atomic.Int64)
 
-	var signal = pool.NewSignal(b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.NewSignal(b.Context(), uuid.New().String())
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 		incr.Add(1)
 		return nil
 	})
-
-	b.StartTimer()
 
 	var wg sync.WaitGroup
 
@@ -116,7 +114,9 @@ func BenchmarkSignalsTPool(b *testing.B) {
 	}()
 
 	for b.Loop() {
+		b.StopTimer()
 		wg.Add(1)
+		b.StartTimer()
 
 		err := signal.Send(b.Context(), "This is a signal message!")
 		if err != nil {

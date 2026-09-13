@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	_ Signal[int]      = (*signal[int])(nil)
-	_ Transmitter[int] = (*signal[int])(nil)
+	_ Signal[int]           = (*signal[int])(nil)
+	_ ReceiverProvider[int] = (*signal[int])(nil)
+	// _ Transmitter[int] = (*signal[int])(nil)
 )
 
 // Underlying signal struct for the Signal interface.
@@ -196,15 +197,15 @@ func (s *signal[T]) Listen(ctx context.Context, fn func(context.Context, Signal[
 	return receiver, err
 }
 
-func (s *signal[T]) Transmit(ctx context.Context, value T, recv Receiver[T]) (err error) {
-	err = recv.Receive(ctx, s, value)
-	if err != nil {
-		err = ErrReceiver.WithCause(err).Wrapf(
-			"receiver %q:", recv.ID(),
-		)
-	}
-	return err
-}
+//func (s *signal[T]) Transmit(ctx context.Context, value T, recv Receiver[T]) (err error) {
+//	err = recv.Receive(ctx, s, value)
+//	if err != nil {
+//		err = ErrReceiver.WithCause(err).Wrapf(
+//			"receiver %q:", recv.ID(),
+//		)
+//	}
+//	return err
+//}
 
 func (s *signal[T]) Receivers(ctx context.Context) []Receiver[T] {
 	return s.getReceivers()

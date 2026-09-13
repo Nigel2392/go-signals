@@ -3,11 +3,11 @@ package pubsub
 import (
 	"context"
 	"runtime/debug"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/Nigel2392/go-signals"
 )
@@ -22,7 +22,6 @@ func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc fun
 }
 
 func BenchmarkSignals(b *testing.B) {
-	b.StopTimer()
 
 	pool := New[string](
 		b.Context(),
@@ -37,13 +36,11 @@ func BenchmarkSignals(b *testing.B) {
 
 	var incr = new(atomic.Int64)
 
-	var signal = pool.NewSignal(b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.NewSignal(b.Context(), uuid.New().String())
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 		incr.Add(1)
 		return nil
 	})
-
-	b.StartTimer()
 
 	var wg sync.WaitGroup
 
@@ -63,8 +60,13 @@ func BenchmarkSignals(b *testing.B) {
 		}
 	}()
 
+	b.StartTimer()
+	b.ResetTimer()
+
 	for b.Loop() {
+		b.StopTimer()
 		wg.Add(1)
+		b.StartTimer()
 
 		err := signal.Send(b.Context(), "This is a signal message!")
 		if err != nil {
@@ -73,6 +75,69 @@ func BenchmarkSignals(b *testing.B) {
 
 		wg.Wait()
 	}
+
+	b.StopTimer()
+
+	if int(incr.Load()) != (totalReceivers * b.N) {
+		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+	}
+
+	pool.Close()
+}
+
+func BenchmarkSignalsParralel(b *testing.B) {
+
+	pool := New[string](
+		b.Context(),
+		func() PubSub {
+			return NewMockPubSub(false)
+		},
+		PoolOnError(func(ctx context.Context, p *Pool[string], err error) {
+			b.Log(string(debug.Stack()))
+			b.Error(err)
+		}),
+	)
+
+	var incr = new(atomic.Int64)
+
+	var signal = pool.NewSignal(b.Context(), uuid.New().String())
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+		incr.Add(1)
+		return nil
+	})
+
+	var wg sync.WaitGroup
+
+	// benchmarks can only be done with WaitLoop!
+	// this is the only way we can add waitgroups to ensure every task finished
+	// at a possible (hidden) cost of benchmark performance.
+	// hidden because we cannot consistently test [Pool.Loop] this way.
+	go func() {
+		for h, err := range pool.WaitLoop(b.Context()) {
+			// b.Log(v, err)
+			if err != nil {
+				b.Error(err)
+				return
+			}
+			h.Process(b.Context())
+			wg.Done()
+		}
+	}()
+
+	wg.Add(b.N)
+	b.ResetTimer()
+
+	b.RunParallel(func(p *testing.PB) {
+		for p.Next() {
+			err := signal.Send(b.Context(), "This is a signal message!")
+			if err != nil {
+				b.Error(err)
+			}
+		}
+	})
+
+	wg.Wait()
+	b.StopTimer()
 
 	if int(incr.Load()) != (totalReceivers * b.N) {
 		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
@@ -193,7 +258,7 @@ func TestSignalClear(t *testing.T) {
 	sub := pool.subscribers["test_topic"]
 	pool.Mu.RUnlock()
 
-	if sub != nil && sub.receivers.Length() > 0 {
-		t.Errorf("expected 0 receivers after clear, got %d", sub.receivers.Length())
+	if sub != nil && sub.Receivers.Length() > 0 {
+		t.Errorf("expected 0 receivers after clear, got %d", sub.Receivers.Length())
 	}
 }

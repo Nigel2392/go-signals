@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"iter"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +12,11 @@ import (
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
+)
+
+var (
+	_ ChannelBinder = (*BasePool[ChannelBinder])(nil)
+	_ ConfigPool    = (*BasePool[ChannelBinder])(nil)
 )
 
 const (
@@ -34,10 +40,10 @@ const (
 //		return c >= recusionContext(depth)
 //	}
 
-type ProcessorBasePool BasePool
+type ProcessorBasePool[P ChannelBinder] BasePool[P]
 
-func (p *ProcessorBasePool) ProcessReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(context.Context, error)) {
-	(*BasePool)(p).processReceivers(ctx, sig, receivers, val, callErr)
+func (p *ProcessorBasePool[P]) ProcessReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(context.Context, error)) {
+	(*BasePool[P])(p).processReceivers(ctx, sig, receivers, val, callErr)
 }
 
 type clientSetup struct {
@@ -54,7 +60,7 @@ type clientSetup struct {
 	onClientInit []func(context.Context, PubSub) error
 }
 
-type BasePool struct {
+type BasePool[POOLTYPE any] struct {
 	cs clientSetup
 
 	Mu *sync.RWMutex
@@ -93,11 +99,17 @@ type BasePool struct {
 	Closed atomic.Bool
 	Exit   chan struct{}
 
-	backref ChannelBinder
+	backref POOLTYPE
 }
 
-func NewBasePool(clientCtx context.Context, pubsub any) *BasePool {
-	pool := &BasePool{
+type minimumPool interface {
+	ID() uuid.UUID
+	Close()
+	ChannelBinder
+}
+
+func NewBasePool[POOLTYPE minimumPool](clientCtx context.Context, pubsub any) *BasePool[POOLTYPE] {
+	pool := &BasePool[POOLTYPE]{
 		Mu: &sync.RWMutex{},
 	}
 
@@ -126,11 +138,11 @@ func NewBasePool(clientCtx context.Context, pubsub any) *BasePool {
 	return pool
 }
 
-func (r *BasePool) ClientWasSetup() bool {
+func (r *BasePool[P]) ClientWasSetup() bool {
 	return r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup
 }
 
-func (r *BasePool) OnClientInit(ctx context.Context, fn func(context.Context, PubSub) error) error {
+func (r *BasePool[P]) OnClientInit(ctx context.Context, fn func(context.Context, PubSub) error) error {
 
 	// fast path check
 	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
@@ -150,14 +162,14 @@ func (r *BasePool) OnClientInit(ctx context.Context, fn func(context.Context, Pu
 	return nil
 }
 
-func (r *BasePool) WithAutoInitClient(b bool) {
+func (r *BasePool[P]) WithAutoInitClient(b bool) {
 }
 
-func (r *BasePool) WithReference(ref ChannelBinder) {
+func (r *BasePool[P]) WithReference(ref P) {
 	r.backref = ref
 }
 
-func (r *BasePool) Initialize(ctx context.Context) error {
+func (r *BasePool[P]) Initialize(ctx context.Context) error {
 	if r.Encoder == nil {
 		r.Encoder = encoder.NewJSONEncoder()
 	}
@@ -177,43 +189,117 @@ func (r *BasePool) Initialize(ctx context.Context) error {
 	return nil
 }
 
-func (r *BasePool) ID() uuid.UUID {
+func (r *BasePool[P]) ID() uuid.UUID {
 	return r.Inst
 }
 
-func (r *BasePool) MustClient(ctx context.Context) PubSub {
+func (r *BasePool[P]) MustClient(ctx context.Context) PubSub {
 	if err := r.setupClient(ctx); err != nil {
 		panic(fmt.Errorf("error initialising client: %w", err))
 	}
 	return r.cs.client
 }
 
-func (r *BasePool) Client(ctx context.Context) (PubSub, error) {
+func (r *BasePool[P]) Client(ctx context.Context) (PubSub, error) {
 	err := r.setupClient(ctx)
 	return r.cs.client, err
 }
 
-func (r *BasePool) SetChannel(ctx context.Context, ch chan Message) {
+func (r *BasePool[P]) SetChannel(ctx context.Context, ch chan Message) {
 	r.Data = ch
 }
 
-func (r *BasePool) Channel(ctx context.Context) chan Message {
+func (r *BasePool[P]) Channel(ctx context.Context) chan Message {
 	return r.Data
 }
 
-func (p *BasePool) WithInstanceID(id uuid.UUID) {
+func (p *BasePool[P]) WithInstanceID(id uuid.UUID) {
 	p.Inst = id
 }
 
-func (p *BasePool) WithEncoder(enc encoder.Encoder) {
+func (p *BasePool[P]) WithEncoder(enc encoder.Encoder) {
 	p.Encoder = enc
 }
 
-func (p *BasePool) WithTickDuration(t time.Duration) {
+func (p *BasePool[P]) WithTickDuration(t time.Duration) {
 	p.TickTime = t
 }
 
-func (r *BasePool) decodeMessage[T any](_ context.Context, data []byte) (msg *Message, sentVal T, err error) {
+func (r *BasePool[P]) Close() {
+	r.Mu.RLock()
+	defer r.Mu.RUnlock()
+	if r.Exit != nil {
+		r.Closed.Store(true)
+		close(r.Exit)
+		r.Exit = nil
+	}
+}
+
+func (r *BasePool[P]) Send[T any](ctx context.Context, topic string, value T) error {
+	message, err := r.newMessage(ctx, topic, value)
+	if err != nil {
+		return signals.ErrSignal.WithCause(err).Wrapf(
+			"could not encode %T with %T", value, r.Encoder,
+		)
+	}
+
+	data, err := r.Encoder.EncodeBytes(message)
+	if err != nil {
+		return signals.ErrSignal.WithCause(err).Wrapf(
+			"could not encode %T with %T", value, r.Encoder,
+		)
+	}
+
+	c, err := r.Client(ctx)
+	if err != nil {
+		return signals.ErrSignal.WithCause(err).Wrapf(
+			"could not initialize client %T", c,
+		)
+	}
+
+	err = c.Publish(ctx, topic, data)
+	if err != nil {
+		return signals.ErrSignal.WithCause(err).Wrapf(
+			"could not publish %T", value,
+		)
+	}
+
+	return nil
+}
+
+func (r *BasePool[P]) newMessage[T any](ctx context.Context, topic string, value T) (message *Message, err error) {
+	var data []byte
+	if any(value) != nil {
+		data, err = r.Encoder.EncodeBytes(value)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	message = new(Message{
+		Channel: topic,
+		Sender:  r.Inst,
+		Data:    data,
+		Meta:    MsgMetaFromContext(ctx, r.backref),
+	})
+
+	if message.Meta == nil {
+		message.Meta = make(map[string]any)
+	}
+
+	c, err := r.Client(ctx)
+	if err != nil {
+		return message, err
+	}
+
+	if maker, ok := c.(PubSubMsgMaker); ok {
+		message = maker.MakeMessage(ctx, topic, message, true)
+	}
+
+	return message, nil
+}
+
+func (r *BasePool[P]) decodeMessage[T any](_ context.Context, data []byte) (msg *Message, sentVal T, err error) {
 	payload := new(Message)
 	err = r.Encoder.Decode(bytes.NewReader(data), payload)
 	if err != nil {
@@ -229,7 +315,7 @@ func (r *BasePool) decodeMessage[T any](_ context.Context, data []byte) (msg *Me
 	return payload, *val, err
 }
 
-func (r *BasePool) setupClient(ctx context.Context) error {
+func (r *BasePool[P]) setupClient(ctx context.Context) error {
 	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
 		return nil
 	}
@@ -275,4 +361,37 @@ func (r *BasePool) setupClient(ctx context.Context) error {
 	r.cs.flags.Or(bpf_wasSetup)
 
 	return nil
+}
+
+func (r *BasePool[P]) processReceiversIter[T any](ctx context.Context, sig signals.Signal[T], receivers iter.Seq[signals.Receiver[T]], val T, callErr func(context.Context, error)) {
+	ctx = contextWithPool(ctx, r.backref)
+	ch := signals.AsyncReceiveIter(ctx, sig, 0, receivers, val)
+	for {
+		select {
+		case err, ok := <-ch:
+			if !ok {
+				return
+			}
+			callErr(ctx, err)
+		case <-ctx.Done():
+			callErr(ctx, ctx.Err())
+		}
+	}
+}
+
+func (r *BasePool[P]) processReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(context.Context, error)) {
+	ctx = contextWithPool(ctx, r.backref)
+
+	ch := signals.AsyncReceive(ctx, sig, receivers, val)
+	for {
+		select {
+		case err, ok := <-ch:
+			if !ok {
+				return
+			}
+			callErr(ctx, err)
+		case <-ctx.Done():
+			callErr(ctx, ctx.Err())
+		}
+	}
 }

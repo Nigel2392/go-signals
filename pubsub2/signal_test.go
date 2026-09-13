@@ -3,11 +3,11 @@ package pubsub2
 import (
 	"context"
 	"runtime/debug"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/pubsub"
@@ -17,19 +17,18 @@ var totalReceivers = 32000
 
 func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
 	for i := 0; i < amount; i++ {
-		var receiver = signals.NewRecv(receiverFunc)
-		signal.Connect(context.Background(), receiver)
+		signal.Connect(context.Background(), signals.NewRecv(receiverFunc))
 	}
 }
 
 func BenchmarkSignals(b *testing.B) {
 	b.StopTimer()
-
 	pool := New(
 		b.Context(),
 		func() pubsub.PubSub {
 			return NewMockPubSub(false)
 		},
+		pubsub.PoolClientInit(true),
 		pubsub.PoolOnError(func(ctx context.Context, p *Pool, err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
@@ -37,14 +36,11 @@ func BenchmarkSignals(b *testing.B) {
 	)
 
 	var incr = new(atomic.Int64)
-
-	var signal = pool.NewSignal[string](b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
+	var signal = pool.NewSignal[string](b.Context(), uuid.New().String())
 	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 		incr.Add(1)
 		return nil
 	})
-
-	b.StartTimer()
 
 	var wg sync.WaitGroup
 
@@ -64,8 +60,13 @@ func BenchmarkSignals(b *testing.B) {
 		}
 	}()
 
+	b.StartTimer()
+	b.ResetTimer()
+
 	for b.Loop() {
+		b.StopTimer()
 		wg.Add(1)
+		b.StartTimer()
 
 		err := signal.Send(b.Context(), "This is a signal message!")
 		if err != nil {
@@ -74,6 +75,8 @@ func BenchmarkSignals(b *testing.B) {
 
 		wg.Wait()
 	}
+
+	b.StopTimer()
 
 	if int(incr.Load()) != (totalReceivers * b.N) {
 		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
@@ -194,7 +197,7 @@ func TestSignalClear(t *testing.T) {
 	sub := pool.subscribers["test_topic"]
 	pool.Mu.RUnlock()
 
-	if sub != nil && sub.receivers.Length() > 0 {
-		t.Errorf("expected 0 receivers after clear, got %d", sub.receivers.Length())
+	if sub != nil && sub.Receivers.Length() > 0 {
+		t.Errorf("expected 0 receivers after clear, got %d", sub.Receivers.Length())
 	}
 }

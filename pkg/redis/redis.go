@@ -29,6 +29,7 @@ func PubSub(async bool, c any) any {
 		publish: ch,
 	}
 
+	// ensure lazy init whenever we can
 	switch v := c.(type) {
 	case func() *redis.Client:
 		rps._clientFn = func() MinimalClient { return v() }
@@ -96,33 +97,57 @@ func (s *redisPubSub) MakeMessage(ctx context.Context, topic string, message *pu
 func (s *redisPubSub) Subscribe(ctx context.Context, topic string) (pubsub.Subscriber, error) {
 	ps := s.client().Subscribe(ctx, topic)
 	sub := &redisSubscriber{
+		topic:  topic,
 		pubsub: ps,
-		ch:     ps.Channel(s.channelOpts...),
+		// ch:     ps.Channel(s.channelOpts...),
 	}
 
 	// If we are in synchronous mode, forward messages to the centralized channel.
 	// synchronous means the pool loop is blocking, instead of in a goroutine.
 	if s.publish != nil {
-		go sub.forward(s.publish)
+		go sub.forward(ctx, s.publish)
+	} else {
+		sub.ch = ps.Channel(s.channelOpts...)
 	}
 
 	return sub, nil
 }
 
 type redisSubscriber struct {
+	topic  string
 	pubsub *redis.PubSub
 	ch     <-chan *redis.Message
 }
 
-func (s *redisSubscriber) forward(out chan<- pubsub.Message) {
+func (s *redisSubscriber) receiveMessage(ctx context.Context) (*redis.Message, error) {
+	for {
+		msg, err := s.pubsub.Receive(ctx)
+		if err != nil {
+			return &redis.Message{Channel: s.topic}, err
+		}
+
+		switch msg := msg.(type) {
+		case *redis.Subscription, *redis.Pong: // Ignore.
+		case *redis.Message:
+			return msg, err
+		default:
+			return nil, fmt.Errorf("redis: unknown message: %T", msg)
+		}
+	}
+}
+
+func (s *redisSubscriber) forward(ctx context.Context, out chan<- pubsub.Message) {
 	// Blocks until a message arrives.
 	// Automatically breaks and exits when r.pubsub.Close() is called.
-	for msg := range s.ch {
+	for {
+		msg, err := s.receiveMessage(ctx)
+		// for msg := range s.ch {
 		out <- pubsub.Message{
 			Channel: msg.Channel,
 
 			// payload is an encoded pubsub.Message!!!
-			Data: []byte(msg.Payload),
+			Data:  []byte(msg.Payload),
+			Error: err,
 		}
 	}
 }

@@ -57,6 +57,7 @@ func (s *memoryPubSub) Publish(ctx context.Context, topic string, data []byte) e
 		// data is an encoded pubsub.Message!!!
 		Data: data,
 	}
+
 	return nil
 }
 

@@ -3,6 +3,7 @@ package pubsub2
 import (
 	"context"
 	"reflect"
+	"unsafe"
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/google/uuid"
@@ -19,7 +20,7 @@ func (s *wrappedSignal[T]) Name() string {
 }
 
 func (s *wrappedSignal[T]) MsgType() reflect.Type {
-	return (*signal[T])(s).MsgType()
+	return (*signal[T]).MsgType((*signal[T])(s))
 }
 
 func (s *wrappedSignal[T]) Clear(ctx context.Context) error {
@@ -27,7 +28,7 @@ func (s *wrappedSignal[T]) Clear(ctx context.Context) error {
 }
 
 func (s *wrappedSignal[T]) Send(ctx context.Context, v any) error {
-	return (*signal[T])(s).Send(ctx, v.(T))
+	return (*signal[T]).Send((*signal[T])(s), ctx, v.(T))
 }
 
 func (s *wrappedSignal[T]) Connect(ctx context.Context, recv ...signals.Receiver[any]) error {
@@ -41,7 +42,8 @@ func (s *wrappedSignal[T]) Disconnect(ctx context.Context, recv ...signals.Recei
 type wrappedSignalFunc func(context.Context, signals.Signal[any], any) error
 
 func (w wrappedSignalFunc) wrapped[T any](ctx context.Context, s signals.Signal[T], t T) error {
-	return w(ctx, (*wrappedSignal[T])(s.(*signal[T])), t)
+	var ifaceVal = (*iface)(unsafe.Pointer(&s)) // ptr is [signal], can cast to [wrappedSignal]
+	return w(ctx, (*wrappedSignal[T])(ifaceVal.ptr), t)
 }
 
 func (s *wrappedSignal[T]) Listen(ctx context.Context, fn func(context.Context, signals.Signal[any], any) error) (signals.Receiver[any], error) {

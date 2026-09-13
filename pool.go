@@ -7,11 +7,6 @@ import (
 	"github.com/Nigel2392/go-signals/internal/omap"
 )
 
-type SignalPool[T any] interface {
-	NewSignal(ctx context.Context, name string) Signal[T]
-	Send(ctx context.Context, name string, value T) error
-}
-
 // Pool of signals.
 //
 // Can be used to store, retrieve and delete signals.

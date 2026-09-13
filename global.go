@@ -2,7 +2,13 @@ package signals
 
 import (
 	"context"
+	"iter"
 )
+
+type SignalPool[T any] interface {
+	NewSignal(ctx context.Context, name string) Signal[T]
+	Send(ctx context.Context, name string, value T) error
+}
 
 // Receiver interface
 // This will be registered to any signals that it wants to receive.
@@ -47,11 +53,21 @@ type Signal[T any] interface {
 	Clear(context.Context) error
 }
 
-// Allows for [SendAsync] to properly and uniformly work across multiple signal packages.
-type Transmitter[T any] interface {
-	Signal[T]
-	Transmit(ctx context.Context, value T, recv Receiver[T]) (err error)
+//	// Allows for [SendAsync] to properly and uniformly work across multiple signal packages.
+//	type Transmitter[T any] interface {
+//		Transmit(ctx context.Context, value T, recv Receiver[T]) (err error)
+//	}
+
+type ReceiverProvider[T any] interface {
 	Receivers(ctx context.Context) []Receiver[T]
+}
+
+type ReceiverIterProvider[T any] interface {
+	Receivers(ctx context.Context) iter.Seq[Receiver[T]]
+}
+
+type ReceiverIterLenProvider[T any] interface {
+	Receivers(ctx context.Context) (int, iter.Seq[Receiver[T]])
 }
 
 // Default signal pool
@@ -107,12 +123,38 @@ func BatchSize(ctx context.Context) int {
 //
 // The returned channel may be nil when there are no receivers returned by said signal.
 //
-// If the signal does not implement the [Transmitter] interface, we will fall back to
+// If the signal does not implement the [ReceiverProvider], [ReceiverIterProvider] or [ReceiverIterLenProvider] interface, we will fall back to
 // creating a goroutine (closure) where [Signal.Send] is called and the error (if any)
 // returned through the channel.
-func SendAsync[T any](ctx context.Context, sig Signal[T], val T) <-chan error {
-	t, ok := sig.(Transmitter[T])
-	if !ok {
+func SendAsync[T any](ctx context.Context, sig Signal[T], val T, provider ...any) <-chan error {
+	var _provider any
+	if len(provider) > 0 && provider[0] != nil {
+		_provider = provider[0]
+	} else {
+		_provider = sig
+	}
+
+	switch s := _provider.(type) {
+	case ReceiverProvider[T]:
+		receiverList := s.Receivers(ctx)
+		chSizeSuggest := len(receiverList)
+		if chSizeSuggest != 0 {
+			chSizeSuggest /= 10
+		}
+
+		return AsyncReceive(ctx, sig, receiverList, val)
+
+	case ReceiverIterLenProvider[T]:
+		var chSizeSuggest, receiverIter = s.Receivers(ctx)
+		if chSizeSuggest != 0 {
+			chSizeSuggest /= 10
+		}
+		return transmitIter(ctx, sig, chSizeSuggest, receiverIter, val)
+
+	case ReceiverIterProvider[T]:
+		return transmitIter(ctx, sig, 0, s.Receivers(ctx), val)
+
+	default:
 		var errChan chan error = make(chan error, 1)
 		go func() {
 			defer close(errChan)
@@ -122,6 +164,12 @@ func SendAsync[T any](ctx context.Context, sig Signal[T], val T) <-chan error {
 		}()
 		return errChan
 	}
+}
 
-	return asyncReceive(ctx, sig, t.Receivers(ctx), val)
+func transmitIter[T any](ctx context.Context, s Signal[T], chSizeSuggestion int, recvs iter.Seq[Receiver[T]], value T) <-chan error {
+	//	if s, ok := s.(Transmitter[T]); ok {
+	//		return AsyncTransmitIter(ctx, s, chSizeSuggestion, recvs, value)
+	//	}
+
+	return AsyncReceiveIter(ctx, s, chSizeSuggestion, recvs, value)
 }
