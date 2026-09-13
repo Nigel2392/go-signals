@@ -114,3 +114,38 @@ func (s *signal[T]) Listen(ctx context.Context, fn func(context.Context, signals
 	recv := &receiver[T]{id: uuid.New().String(), cb: fn}
 	return recv, s.Connect(ctx, recv)
 }
+
+func (s *signal[T]) Receivers(ctx context.Context) []signals.Receiver[T] {
+	return []signals.Receiver[T]{&poolReceiver[T]{s}}
+}
+
+var _ signals.Receiver[any] = (*poolReceiver[any])(nil)
+
+type poolReceiver[T any] struct {
+	s *signal[T]
+}
+
+// Receives the signal and value from the signal.
+func (p *poolReceiver[T]) Receive(ctx context.Context, s signals.Signal[T], v T) error {
+	return p.s.pool.Send(ctx, p.s.name, v)
+}
+
+// Disconnects the receiver from the signal.
+func (p *poolReceiver[T]) Disconnect(ctx context.Context) error {
+	return signals.ErrReceiver.Wrapf("%T cannot be disconnected", p)
+}
+
+// Sets the signal on the receiver instance for later use.
+func (p *poolReceiver[T]) Bind(ctx context.Context, s signals.Signal[T]) error {
+	return signals.ErrReceiver.Wrapf("%T cannot be rebound", p)
+}
+
+// Retrieves the signal from the receiver instance
+func (p *poolReceiver[T]) Signal() signals.Signal[T] {
+	return p.s
+}
+
+// Return the unique ID of the receiver.
+func (p *poolReceiver[T]) ID() string {
+	return p.s.name
+}

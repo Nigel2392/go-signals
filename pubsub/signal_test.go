@@ -16,8 +16,7 @@ var totalReceivers = 32000
 
 func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
 	for i := 0; i < amount; i++ {
-		var receiver = signals.NewRecv(receiverFunc)
-		signal.Connect(context.Background(), receiver)
+		signal.Listen(context.Background(), receiverFunc)
 	}
 }
 

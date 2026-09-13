@@ -14,6 +14,7 @@ import (
 
 var (
 	_ signals.SignalPool[int]             = (*TPool[int])(nil)
+	_ pubsub.AbstractPool                 = (*TPool[int])(nil)
 	_ pubsub.PubSubPool[int, *TPool[int]] = (*TPool[int])(nil)
 )
 
@@ -34,6 +35,10 @@ func (r *TPool[T]) Close() {
 	(*Pool)(r).Close()
 }
 
+func (r *TPool[T]) Cycle(ctx context.Context, resend bool) error {
+	return (*Pool)(r).Cycle(ctx, resend)
+}
+
 // custom waitloop handling, change from pubsub.Handler[any] to pubsub.Handler[T]
 func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool[T], T], error] {
 	chkTyp := reflect.TypeFor[T]()
@@ -51,6 +56,9 @@ func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool
 			}
 
 			// new handler object because the old one is of type Handler[any]
+			//
+			// pretty sure the below conversion is safe (tests pass)
+			// since the underlying type of [pubsub.BasePool]'s POOLTYPE == *Pool == *TPool
 			newHandler := pubsub.NewHandler[*TPool[T], T]((*pubsub.BasePool[*TPool[T]])(unsafe.Pointer(r.BasePool)))
 			newHandler.Value = handler.Value.(T)
 			newHandler.Message = handler.Message
@@ -58,7 +66,8 @@ func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool
 
 			// set [pubsub.Handler.ReceiversIter] instead of [pubsub.Handler.Receivers]
 			// this saves a lot of b/op and some allocs (deepcopying slices)
-			newHandler.ReceiversIter = func(yield func(signals.Receiver[T]) bool) {
+			newHandler.ReceiversIter.Len = len(handler.Receivers)
+			newHandler.ReceiversIter.Receivers = func(yield func(signals.Receiver[T]) bool) {
 				for _, r := range handler.Receivers {
 					if !yield(TypedReceiver[T](r)) {
 						break

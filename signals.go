@@ -29,6 +29,10 @@ type signal[T any] struct {
 
 // Create a new signal.
 func New[T any](name string) Signal[T] {
+	return newSig[T](name)
+}
+
+func newSig[T any](name string) *signal[T] {
 	return &signal[T]{
 		name:      name,
 		receivers: make([]Receiver[T], 0),

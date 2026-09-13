@@ -10,21 +10,26 @@ var _ pubsub.PubSub = (*memoryPubSub)(nil)
 var _ pubsub.PubSubBinder = (*memoryPubSub)(nil)
 var _ pubsub.Subscriber = (*memorySubscriber)(nil)
 
-func PubSub(async bool) pubsub.PubSub {
+func PubSub(async bool, channelSize ...int) pubsub.PubSub {
+	var chanSize = 5
+	if len(channelSize) > 0 {
+		chanSize = channelSize[0]
+	}
+
 	var ch chan pubsub.Message
 	if !async {
-		ch = make(chan pubsub.Message)
+		ch = make(chan pubsub.Message, chanSize)
 	}
 
 	return &memoryPubSub{
 		publish:     ch,
-		subscribers: make(map[string]*memorySubscriber),
+		subscribers: make(map[string]memorySubscriber),
 	}
 }
 
 type memoryPubSub struct {
 	publish     chan pubsub.Message
-	subscribers map[string]*memorySubscriber
+	subscribers map[string]memorySubscriber
 }
 
 func (s *memoryPubSub) BindChannel(ctx context.Context, b pubsub.ChannelBinder) {
@@ -51,7 +56,7 @@ func (s *memoryPubSub) Publish(ctx context.Context, topic string, data []byte) e
 		return nil
 	}
 
-	sub.ch <- pubsub.Message{
+	sub <- pubsub.Message{
 		Channel: topic,
 
 		// data is an encoded pubsub.Message!!!
@@ -64,24 +69,22 @@ func (s *memoryPubSub) Publish(ctx context.Context, topic string, data []byte) e
 func (s *memoryPubSub) Subscribe(ctx context.Context, topic string) (pubsub.Subscriber, error) {
 	sub, ok := s.subscribers[topic]
 	if !ok {
-		sub = &memorySubscriber{
-			ch: s.publish,
+		if s.publish == nil {
+			sub = make(chan pubsub.Message, 100)
+		} else {
+			sub = s.publish
 		}
-		if sub.ch == nil {
-			sub.ch = make(chan pubsub.Message, 100)
-		}
+
 		s.subscribers[topic] = sub
 	}
 	return sub, nil
 }
 
-type memorySubscriber struct {
-	ch chan pubsub.Message
-}
+type memorySubscriber chan pubsub.Message
 
-func (s *memorySubscriber) TryReceive() ([]byte, bool) {
+func (s memorySubscriber) TryReceive() ([]byte, bool) {
 	select {
-	case msg, ok := <-s.ch:
+	case msg, ok := <-s:
 		if !ok {
 			return nil, false
 		}
@@ -91,7 +94,7 @@ func (s *memorySubscriber) TryReceive() ([]byte, bool) {
 	}
 }
 
-func (r *memorySubscriber) Close() error {
-	close(r.ch)
+func (r memorySubscriber) Close() error {
+	close(r)
 	return nil
 }

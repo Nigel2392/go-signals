@@ -1,4 +1,4 @@
-package signals_test
+package signals
 
 import (
 	"context"
@@ -8,12 +8,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"uuid"
-
-	"github.com/Nigel2392/go-signals"
 )
 
 var TOTAL_AMOUNT = 32000
-var pool = signals.NewPool[string]()
+var pool = NewPool[string]()
 
 func TestSignals(t *testing.T) {
 	var signalID = uuid.New().String()
@@ -21,7 +19,7 @@ func TestSignals(t *testing.T) {
 
 	var messages = make([]string, 0)
 
-	var receiver = signals.NewRecv(func(ctx context.Context, signal signals.Signal[string], value string) error {
+	var receiver = NewRecv(func(ctx context.Context, signal Signal[string], value string) error {
 		t.Logf("Received %v from %s", value, signal.Name())
 		messages = append(messages, value)
 		return nil
@@ -56,17 +54,17 @@ func TestSignals(t *testing.T) {
 func TestMultiple(t *testing.T) {
 	var signal = pool.Get(uuid.New().String())
 	var messages = make([]string, 0)
-	var receiver1 = signals.NewRecv(func(ctx context.Context, signal signals.Signal[string], value string) error {
+	var receiver1 = NewRecv(func(ctx context.Context, signal Signal[string], value string) error {
 		t.Log("Signal 1 fired.")
 		messages = append(messages, value)
 		return nil
 	})
-	var receiver2 = signals.NewRecv(func(ctx context.Context, signal signals.Signal[string], value string) error {
+	var receiver2 = NewRecv(func(ctx context.Context, signal Signal[string], value string) error {
 		t.Log("Signal 2 fired.")
 		messages = append(messages, value)
 		return nil
 	})
-	var receiver3 = signals.NewRecv(func(ctx context.Context, signal signals.Signal[string], value string) error {
+	var receiver3 = NewRecv(func(ctx context.Context, signal Signal[string], value string) error {
 		t.Log("Signal 3 fired.")
 		messages = append(messages, value)
 		return nil
@@ -97,13 +95,13 @@ func TestSendRaces(t *testing.T) {
 	GOROUTINES := 1000
 
 	t.Run("Signals", func(t *testing.T) {
-		sig := signals.New[string]("TestSendRaces")
+		sig := New[string]("TestSendRaces")
 		incr := atomic.Int64{}
 		wg := sync.WaitGroup{}
 		wg.Add((GOROUTINES * GOROUTINES)) // - (GOROUTINES / 100 * 10))
 
 		//recvs :=
-		connectSignal(GOROUTINES, sig, func(ctx context.Context, signal signals.Signal[string], value string) error {
+		connectSignal(GOROUTINES, sig, func(ctx context.Context, signal Signal[string], value string) error {
 			incr.Add(1)
 			wg.Done()
 			return nil
@@ -131,7 +129,7 @@ func TestSendRaces(t *testing.T) {
 		wg.Add((GOROUTINES * GOROUTINES)) // - (GOROUTINES / 100 * 10))
 
 		// recvs :=
-		connectSignal(GOROUTINES, sig, func(ctx context.Context, signal signals.Signal[string], value string) error {
+		connectSignal(GOROUTINES, sig, func(ctx context.Context, signal Signal[string], value string) error {
 			incr.Add(1)
 			wg.Done()
 			return nil
@@ -159,7 +157,7 @@ func TestSendRaces(t *testing.T) {
 		wg.Add((GOROUTINES * GOROUTINES)) // - (GOROUTINES / 100 * 10))
 
 		// recvs :=
-		connectSignal(GOROUTINES, sig, func(ctx context.Context, signal signals.Signal[string], value string) error {
+		connectSignal(GOROUTINES, sig, func(ctx context.Context, signal Signal[string], value string) error {
 			incr.Add(1)
 			wg.Done()
 			return nil
@@ -182,12 +180,11 @@ func TestSendRaces(t *testing.T) {
 
 }
 
-func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) []signals.Receiver[T] {
-	var recvs = make([]signals.Receiver[T], amount)
+func connectSignal[T any](amount int, signal Signal[T], receiverFunc func(ctx context.Context, signal Signal[T], value T) error) []Receiver[T] {
+	var recvs = make([]Receiver[T], amount)
 	for i := 0; i < amount; i++ {
-		var receiver = signals.NewRecv(receiverFunc)
-		signal.Connect(context.Background(), receiver)
-		recvs[i] = receiver
+		r, _ := signal.Listen(context.Background(), receiverFunc)
+		recvs[i] = r
 	}
 	return recvs
 }
@@ -197,7 +194,7 @@ func BenchmarkSignals(b *testing.B) {
 	var signal = pool.Get(uuid.New().String())
 	var incr int
 
-	connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+	connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal Signal[string], value string) error {
 		incr++
 		return nil
 	})
@@ -225,18 +222,18 @@ func BenchmarkSignalsAsync(b *testing.B) {
 		// dont use atomic int, or check the value for correctness unless DEFAULT_BATCH_SIZE != 0 (i.e. build tag batches = false)
 		var incr int64
 
-		connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+		connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal Signal[string], value string) error {
 			incr++
 			return nil
 		})
 
-		ctx := signals.ContextWithBatchSize(b.Context(), size)
+		ctx := ContextWithBatchSize(b.Context(), size)
 
 		b.StartTimer()
 		b.ResetTimer()
 
 		for b.Loop() {
-			errCh := signals.SendAsync(ctx, signal, "This is a signal message!")
+			errCh := SendAsync(ctx, signal, "This is a signal message!")
 			for range errCh { // ensures that we actually wait for all receivers to finish
 			}
 		}
@@ -245,12 +242,12 @@ func BenchmarkSignalsAsync(b *testing.B) {
 			b.Log(incr)
 		}
 
-		if signals.DEFAULT_BATCH_SIZE == 0 && incr != int64(TOTAL_AMOUNT*b.N) {
+		if DEFAULT_BATCH_SIZE == 0 && incr != int64(TOTAL_AMOUNT*b.N) {
 			b.Fatalf("incr should be %d, got %d", TOTAL_AMOUNT*b.N, incr)
 		}
 	}
 
-	if signals.DEFAULT_BATCH_SIZE == 0 {
+	if DEFAULT_BATCH_SIZE == 0 {
 		bench(b, 0)
 	} else {
 		for _, size := range batchSizes {
@@ -268,7 +265,7 @@ func BenchmarkSignalsAsyncParallel(b *testing.B) {
 		10, 50, 100, 250, 500, 1000,
 	}
 
-	if signals.DEFAULT_BATCH_SIZE == 0 {
+	if DEFAULT_BATCH_SIZE == 0 {
 		batchSizes = []int{0}
 	}
 
@@ -278,19 +275,19 @@ func BenchmarkSignalsAsyncParallel(b *testing.B) {
 			var signal = pool.Get(uuid.New().String())
 			var incr atomic.Uint64
 
-			connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+			connectSignal(TOTAL_AMOUNT, signal, func(ctx context.Context, signal Signal[string], value string) error {
 				incr.Add(1)
 				return nil
 			})
 
-			ctx := signals.ContextWithBatchSize(b.Context(), size)
+			ctx := ContextWithBatchSize(b.Context(), size)
 
 			b.StartTimer()
 			b.ResetTimer()
 
 			b.RunParallel(func(p *testing.PB) {
 				for p.Next() {
-					errCh := signals.SendAsync(ctx, signal, "This is a signal message!")
+					errCh := SendAsync(ctx, signal, "This is a signal message!")
 					for range errCh { // ensures that we actually wait for all receivers to finish
 					}
 				}
@@ -312,7 +309,7 @@ func TestMany(t *testing.T) {
 
 	var signal = pool.Get(uuid.New().String())
 
-	connectSignal(amountCount, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return nil })
+	connectSignal(amountCount, signal, func(ctx context.Context, signal Signal[string], value string) error { return nil })
 
 	for i := 0; i < amountCount; i++ {
 		signal.Send(t.Context(), "This is a signal message!")
@@ -323,9 +320,9 @@ func TestSendAsync(t *testing.T) {
 	var signal = pool.Get(uuid.New().String())
 	var totalReceivers = TOTAL_AMOUNT
 
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal Signal[string], value string) error { return errors.New(value) })
 
-	var errChan <-chan error = signals.SendAsync(t.Context(), signal, "This is a signal message!")
+	var errChan <-chan error = SendAsync(t.Context(), signal, "This is a signal message!")
 	var errs []error = make([]error, 0)
 	for err := range errChan {
 		if err != nil {
@@ -335,18 +332,18 @@ func TestSendAsync(t *testing.T) {
 
 	expectedCount := 1
 	expectedInner := totalReceivers
-	if signals.DEFAULT_BATCH_SIZE > 0 {
-		expectedCount = totalReceivers / signals.DEFAULT_BATCH_SIZE
-		expectedInner = signals.DEFAULT_BATCH_SIZE
+	if DEFAULT_BATCH_SIZE > 0 {
+		expectedCount = totalReceivers / DEFAULT_BATCH_SIZE
+		expectedInner = DEFAULT_BATCH_SIZE
 	}
 
 	if len(errs) != expectedCount {
 		t.Fatalf("Expected %d grouped error, got %d", expectedCount, len(errs))
 	}
 
-	err, ok := signals.SignalError(errs[0])
+	err, ok := SignalError(errs[0])
 	if !ok {
-		t.Fatalf("Expected to retrieve signals.Error, got %T", errs[0])
+		t.Fatalf("Expected to retrieve Error, got %T", errs[0])
 	}
 
 	if len(err.Errors) != expectedInner {
@@ -357,12 +354,12 @@ func TestSendAsync(t *testing.T) {
 func TestManyRecv(t *testing.T) {
 	var signal = pool.Get(uuid.New().String())
 	var totalReceivers = TOTAL_AMOUNT
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error { return errors.New(value) })
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal Signal[string], value string) error { return errors.New(value) })
 
 	var err = signal.Send(t.Context(), "This is a signal message!")
 
 	if err != nil {
-		if e, ok := signals.SignalError(err); ok {
+		if e, ok := SignalError(err); ok {
 			if e.Len() != totalReceivers {
 				t.Errorf("Expected %d errors, got %d", totalReceivers, e.Len())
 			} else {
@@ -383,7 +380,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 	var callCount int
 	var maxCalls = 5
 
-	var receiver = signals.NewRecv(func(ctx context.Context, sig signals.Signal[string], value string) error {
+	var receiver = NewRecv(func(ctx context.Context, sig Signal[string], value string) error {
 		callCount++
 		t.Logf("Call %d: received %s", callCount, value)
 
@@ -415,7 +412,7 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 
 	var preCount, postCount int
 
-	var preReceiver = signals.NewRecv(func(ctx context.Context, sig signals.Signal[string], value string) error {
+	var preReceiver = NewRecv(func(ctx context.Context, sig Signal[string], value string) error {
 		preCount++
 		t.Log("Pre-Create fired. Emitting Post-Create...")
 
@@ -423,7 +420,7 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 		return postCreate.Send(t.Context(), "triggered from pre-create")
 	})
 
-	var postReceiver = signals.NewRecv(func(ctx context.Context, sig signals.Signal[string], value string) error {
+	var postReceiver = NewRecv(func(ctx context.Context, sig Signal[string], value string) error {
 		postCount++
 		t.Log("Post-Create fired.")
 		return nil

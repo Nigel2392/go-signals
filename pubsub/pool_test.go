@@ -90,8 +90,13 @@ func TestPoolInternalState(t *testing.T) {
 			t.Errorf("expected closed flag to be true")
 		}
 
-		if pool.Exit != nil {
-			t.Errorf("expected exit channel to be nil")
+		select {
+		case _, ok := <-pool.Exit:
+			if ok {
+				t.Errorf("expected exit channel to be closed")
+			}
+		default:
+			t.Errorf("expected exit channel to be closed")
 		}
 	})
 }
@@ -120,7 +125,7 @@ func TestPoolWaitLoop(t *testing.T) {
 	// Trigger a send
 	pool.Send(context.Background(), "test_topic", "loop message")
 
-	close(pool.Channel(t.Context())) // Close channel to exit the WaitLoop iter
+	pool.Close()
 
 	count := 0
 	for handler, err := range pool.WaitLoop(context.Background()) {

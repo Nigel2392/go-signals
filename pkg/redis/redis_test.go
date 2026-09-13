@@ -22,8 +22,7 @@ var totalReceivers = 32000
 
 func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
 	for i := 0; i < amount; i++ {
-		var receiver = signals.NewRecv(receiverFunc)
-		signal.Connect(context.Background(), receiver)
+		signal.Listen(context.Background(), receiverFunc)
 	}
 }
 
@@ -39,12 +38,12 @@ func BenchmarkSignals(b *testing.B) {
 		b.Fatalf("could not instantiate redis server: %v", err)
 	}
 
-	pool := pubsub.New[string](
+	pool := pubsub.New[*string](
 		b.Context(),
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[*string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
 		}),
@@ -53,7 +52,7 @@ func BenchmarkSignals(b *testing.B) {
 	var incr = new(atomic.Int64)
 
 	var signal = pool.NewSignal(b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
 		incr.Add(1)
 		return nil
 	})
@@ -72,17 +71,23 @@ func BenchmarkSignals(b *testing.B) {
 		}
 	}()
 
-	wg.Add(b.N)
+	msg := new("This is a signal message!")
+	b.StartTimer()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		err := signal.Send(b.Context(), "This is a signal message!")
+	for b.Loop() {
+		b.StopTimer()
+		wg.Add(1)
+		b.StartTimer()
+
+		err := signal.Send(b.Context(), msg)
 		if err != nil {
 			b.Error(err)
 		}
+
+		wg.Wait()
 	}
 
-	wg.Wait()
 	b.StopTimer()
 
 	if int(incr.Load()) != (totalReceivers * b.N) {
@@ -99,12 +104,12 @@ func BenchmarkSignalsParallel(b *testing.B) {
 		b.Fatalf("could not instantiate redis server: %v", err)
 	}
 
-	pool := pubsub.New[string](
+	pool := pubsub.New[*string](
 		b.Context(),
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
+		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[*string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
 		}),
@@ -113,7 +118,7 @@ func BenchmarkSignalsParallel(b *testing.B) {
 	var incr = new(atomic.Int64)
 
 	var signal = pool.NewSignal(b.Context(), strconv.Itoa(int(time.Now().UnixNano())))
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
 		incr.Add(1)
 		return nil
 	})
@@ -132,13 +137,14 @@ func BenchmarkSignalsParallel(b *testing.B) {
 		}
 	}()
 
+	msg := new("This is a signal message!")
 	wg.Add(b.N)
 	b.StartTimer()
 	b.ResetTimer()
 
 	b.RunParallel(func(p *testing.PB) {
 		for p.Next() {
-			err := signal.Send(b.Context(), "This is a signal message!")
+			err := signal.Send(b.Context(), msg)
 			if err != nil {
 				b.Error(err)
 			}
@@ -195,17 +201,23 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 		}
 	}()
 
-	wg.Add(b.N)
+	msg := new("This is a signal message!")
+	b.StartTimer()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		err := signal.Send(b.Context(), new("This is a signal message!"))
+	for b.Loop() {
+		b.StopTimer()
+		wg.Add(1)
+		b.StartTimer()
+
+		err := signal.Send(b.Context(), msg)
 		if err != nil {
 			b.Error(err)
 		}
+
+		wg.Wait()
 	}
 
-	wg.Wait()
 	b.StopTimer()
 
 	if int(incr.Load()) != (totalReceivers * b.N) {

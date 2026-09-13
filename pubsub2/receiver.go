@@ -7,6 +7,11 @@ import (
 	"github.com/Nigel2392/go-signals"
 )
 
+type iface struct {
+	typ uintptr
+	ptr unsafe.Pointer
+}
+
 type ifaceReceiver[T any] struct {
 	signals.Receiver[T]
 }
@@ -54,11 +59,6 @@ func (r *wrappedReceiver[T]) Signal() signals.Signal[any] {
 	}
 
 	return (*wrappedSignal[T])(r.sig)
-}
-
-type iface struct {
-	typ uintptr
-	ptr unsafe.Pointer
 }
 
 // Receives the signal object and value

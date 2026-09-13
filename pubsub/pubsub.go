@@ -14,6 +14,24 @@ import (
 // data across the pubsub signal pool's publishing lifecycle
 type Encoder = encoder.Encoder
 
+type AbstractPool interface {
+	ChannelBinder
+
+	// Cycle tries to pull a single value from the pool
+	//
+	// This is a blocking operation.
+	Cycle(ctx context.Context, resend bool) error
+
+	// The instance ID of the pool
+	ID() uuid.UUID
+
+	// Loop is optimized to run in a separate goroutine, called by `go pool.Loop(ctx)`
+	Loop(ctx context.Context)
+
+	// Stop all loops and close the pool down so no further processing can occur.
+	Close()
+}
+
 // The PubSubPool is the interface that [Pool] implements.
 //
 // It allows for easily implementing and using a subscribe- publish pattern.
@@ -24,13 +42,7 @@ type Encoder = encoder.Encoder
 // * `github.com/Nigel2392/go-signals/pkg/redis`
 type PubSubPool[T any, P PubSubPool[T, P]] interface {
 	signals.SignalPool[T]
-	ChannelBinder
-
-	// The instance ID of the pool
-	ID() uuid.UUID
-
-	// Loop is optimized to run in a separate goroutine, called by `go pool.Loop(ctx)`
-	Loop(ctx context.Context)
+	AbstractPool
 
 	// WaitLoop is optimized to aggregate all central signals into the [PubSubPool]'s datachannel,
 	// allowing for a lot more flexibility when it comes to testing and handling received data.
@@ -46,9 +58,6 @@ type PubSubPool[T any, P PubSubPool[T, P]] interface {
 	// This method is also called by the [signal] type returned
 	// from the pool's [PubSubPool.NewSignal] method.
 	Send(ctx context.Context, topic string, value T) error
-
-	// Stop all loops and close the pool down so no further processing can occur.
-	Close()
 }
 
 // PubSub is the publisher backend used inside of the [PubSubPool]

@@ -99,15 +99,15 @@ func (s *redisPubSub) Subscribe(ctx context.Context, topic string) (pubsub.Subsc
 	sub := &redisSubscriber{
 		topic:  topic,
 		pubsub: ps,
-		// ch:     ps.Channel(s.channelOpts...),
+		ch:     ps.Channel(s.channelOpts...),
 	}
 
 	// If we are in synchronous mode, forward messages to the centralized channel.
 	// synchronous means the pool loop is blocking, instead of in a goroutine.
 	if s.publish != nil {
 		go sub.forward(ctx, s.publish)
-	} else {
-		sub.ch = ps.Channel(s.channelOpts...)
+		// } else {
+		// sub.ch = ps.Channel(s.channelOpts...)
 	}
 
 	return sub, nil
@@ -119,35 +119,54 @@ type redisSubscriber struct {
 	ch     <-chan *redis.Message
 }
 
-func (s *redisSubscriber) receiveMessage(ctx context.Context) (*redis.Message, error) {
-	for {
-		msg, err := s.pubsub.Receive(ctx)
-		if err != nil {
-			return &redis.Message{Channel: s.topic}, err
-		}
-
-		switch msg := msg.(type) {
-		case *redis.Subscription, *redis.Pong: // Ignore.
-		case *redis.Message:
-			return msg, err
-		default:
-			return nil, fmt.Errorf("redis: unknown message: %T", msg)
-		}
-	}
-}
+//
+//	func (s *redisSubscriber) receiveMessage(ctx context.Context) (*redis.Message, error) {
+//		for {
+//			msg, err := s.pubsub.Receive(ctx)
+//			if err != nil {
+//				return &redis.Message{Channel: s.topic}, err
+//			}
+//
+//			switch msg := msg.(type) {
+//			case *redis.Subscription, *redis.Pong: // Ignore.
+//			case *redis.Message:
+//				return msg, err
+//			default:
+//				return nil, fmt.Errorf("redis: unknown message: %T", msg)
+//			}
+//		}
+//	}
 
 func (s *redisSubscriber) forward(ctx context.Context, out chan<- pubsub.Message) {
 	// Blocks until a message arrives.
 	// Automatically breaks and exits when r.pubsub.Close() is called.
+	var (
+		msg *redis.Message
+		ok  bool
+	)
+
 	for {
-		msg, err := s.receiveMessage(ctx)
+		//	msg, err := s.receiveMessage(ctx)
+		//	if errors.Is(err, redis.ErrClosed) {
+		//		return
+		//	}
+
+		select {
+		case msg, ok = <-s.ch:
+			if !ok {
+				return
+			}
+
+		case <-ctx.Done():
+			return
+		}
+
 		// for msg := range s.ch {
 		out <- pubsub.Message{
 			Channel: msg.Channel,
 
 			// payload is an encoded pubsub.Message!!!
-			Data:  []byte(msg.Payload),
-			Error: err,
+			Data: []byte(msg.Payload),
 		}
 	}
 }

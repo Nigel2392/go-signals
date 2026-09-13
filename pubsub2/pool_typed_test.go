@@ -2,6 +2,7 @@ package pubsub2
 
 import (
 	"context"
+	"errors"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -74,6 +75,7 @@ func TestTPoolWaitLoop(t *testing.T) {
 }
 
 func BenchmarkSignalsTPool(b *testing.B) {
+	b.StopTimer()
 
 	pool := New(
 		b.Context(),
@@ -85,12 +87,12 @@ func BenchmarkSignalsTPool(b *testing.B) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
 		}),
-	).TPool[string]()
+	).TPool[*string]()
 
 	var incr = new(atomic.Int64)
 
 	var signal = pool.NewSignal(b.Context(), uuid.New().String())
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
 		incr.Add(1)
 		return nil
 	})
@@ -105,6 +107,10 @@ func BenchmarkSignalsTPool(b *testing.B) {
 		for h, err := range pool.WaitLoop(b.Context()) {
 			// b.Log(v, err)
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+
 				b.Error(err)
 				return
 			}
@@ -113,12 +119,16 @@ func BenchmarkSignalsTPool(b *testing.B) {
 		}
 	}()
 
+	testString := new("This is a signal message!")
+	b.StartTimer()
+	b.ResetTimer()
+
 	for b.Loop() {
 		b.StopTimer()
 		wg.Add(1)
 		b.StartTimer()
 
-		err := signal.Send(b.Context(), "This is a signal message!")
+		err := signal.Send(b.Context(), testString)
 		if err != nil {
 			b.Error(err)
 		}

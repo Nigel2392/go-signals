@@ -2,6 +2,7 @@ package pubsub2
 
 import (
 	"context"
+	"errors"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -17,7 +18,7 @@ var totalReceivers = 32000
 
 func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
 	for i := 0; i < amount; i++ {
-		signal.Connect(context.Background(), signals.NewRecv(receiverFunc))
+		signal.Listen(context.Background(), receiverFunc)
 	}
 }
 
@@ -36,8 +37,8 @@ func BenchmarkSignals(b *testing.B) {
 	)
 
 	var incr = new(atomic.Int64)
-	var signal = pool.NewSignal[string](b.Context(), uuid.New().String())
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+	var signal = pool.NewSignal[*string](b.Context(), uuid.New().String())
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
 		incr.Add(1)
 		return nil
 	})
@@ -52,6 +53,9 @@ func BenchmarkSignals(b *testing.B) {
 		for h, err := range pool.WaitLoop(b.Context()) {
 			// b.Log(v, err)
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
 				b.Error(err)
 				return
 			}
@@ -59,6 +63,8 @@ func BenchmarkSignals(b *testing.B) {
 			wg.Done()
 		}
 	}()
+
+	testString := new("This is a signal message!")
 
 	b.StartTimer()
 	b.ResetTimer()
@@ -68,8 +74,78 @@ func BenchmarkSignals(b *testing.B) {
 		wg.Add(1)
 		b.StartTimer()
 
-		err := signal.Send(b.Context(), "This is a signal message!")
+		err := signal.Send(b.Context(), testString)
 		if err != nil {
+			b.Error(err)
+		}
+
+		wg.Wait()
+	}
+
+	b.StopTimer()
+
+	if int(incr.Load()) != (totalReceivers * b.N) {
+		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+	}
+
+	pool.Close()
+}
+
+func BenchmarkSignalsSendAsync(b *testing.B) {
+	b.StopTimer()
+	pool := New(
+		b.Context(),
+		func() pubsub.PubSub {
+			return NewMockPubSub(false)
+		},
+		pubsub.PoolClientInit(true),
+		pubsub.PoolOnError(func(ctx context.Context, p *Pool, err error) {
+			b.Log(string(debug.Stack()))
+			b.Error(err)
+		}),
+	)
+
+	var incr = new(atomic.Int64)
+	var signal = pool.NewSignal[*string](b.Context(), uuid.New().String())
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
+		incr.Add(1)
+		return nil
+	})
+
+	var wg sync.WaitGroup
+
+	// benchmarks can only be done with WaitLoop!
+	// this is the only way we can add waitgroups to ensure every task finished
+	// at a possible (hidden) cost of benchmark performance.
+	// hidden because we cannot consistently test [Pool.Loop] this way.
+	go func() {
+		for h, err := range pool.WaitLoop(b.Context()) {
+			// b.Log(v, err)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+
+				b.Error(err)
+				return
+			}
+			h.Process(b.Context())
+			wg.Done()
+		}
+	}()
+
+	testString := new("This is a signal message!")
+
+	b.StartTimer()
+	b.ResetTimer()
+
+	for b.Loop() {
+		b.StopTimer()
+		wg.Add(1)
+		b.StartTimer()
+
+		errCh := signals.SendAsync(b.Context(), signal, testString)
+		for err := range errCh {
 			b.Error(err)
 		}
 

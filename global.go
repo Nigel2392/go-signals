@@ -136,23 +136,14 @@ func SendAsync[T any](ctx context.Context, sig Signal[T], val T, provider ...any
 
 	switch s := _provider.(type) {
 	case ReceiverProvider[T]:
-		receiverList := s.Receivers(ctx)
-		chSizeSuggest := len(receiverList)
-		if chSizeSuggest != 0 {
-			chSizeSuggest /= 10
-		}
-
-		return AsyncReceive(ctx, sig, receiverList, val)
+		return AsyncReceive(ctx, sig, s.Receivers(ctx), val)
 
 	case ReceiverIterLenProvider[T]:
-		var chSizeSuggest, receiverIter = s.Receivers(ctx)
-		if chSizeSuggest != 0 {
-			chSizeSuggest /= 10
-		}
-		return transmitIter(ctx, sig, chSizeSuggest, receiverIter, val)
+		var recvLen, receiverIter = s.Receivers(ctx)
+		return AsyncReceiveIter(ctx, sig, recvLen, receiverIter, val)
 
 	case ReceiverIterProvider[T]:
-		return transmitIter(ctx, sig, 0, s.Receivers(ctx), val)
+		return AsyncReceiveIter(ctx, sig, 0, s.Receivers(ctx), val)
 
 	default:
 		var errChan chan error = make(chan error, 1)
@@ -166,10 +157,10 @@ func SendAsync[T any](ctx context.Context, sig Signal[T], val T, provider ...any
 	}
 }
 
-func transmitIter[T any](ctx context.Context, s Signal[T], chSizeSuggestion int, recvs iter.Seq[Receiver[T]], value T) <-chan error {
-	//	if s, ok := s.(Transmitter[T]); ok {
-	//		return AsyncTransmitIter(ctx, s, chSizeSuggestion, recvs, value)
-	//	}
-
-	return AsyncReceiveIter(ctx, s, chSizeSuggestion, recvs, value)
-}
+//	func transmitIter[T any](ctx context.Context, s Signal[T], chSizeSuggestion int, recvs iter.Seq[Receiver[T]], value T) <-chan error {
+//		//	if s, ok := s.(Transmitter[T]); ok {
+//		//		return AsyncTransmitIter(ctx, s, chSizeSuggestion, recvs, value)
+//		//	}
+//
+//		return AsyncReceiveIter(ctx, s, chSizeSuggestion, recvs, value)
+//	}

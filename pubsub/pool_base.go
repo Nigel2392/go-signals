@@ -228,10 +228,14 @@ func (p *BasePool[P]) WithTickDuration(t time.Duration) {
 func (r *BasePool[P]) Close() {
 	r.Mu.RLock()
 	defer r.Mu.RUnlock()
+
+	if r.Data != nil {
+		close(r.Data)
+	}
+
 	if r.Exit != nil {
 		r.Closed.Store(true)
 		close(r.Exit)
-		r.Exit = nil
 	}
 }
 
@@ -363,9 +367,9 @@ func (r *BasePool[P]) setupClient(ctx context.Context) error {
 	return nil
 }
 
-func (r *BasePool[P]) processReceiversIter[T any](ctx context.Context, sig signals.Signal[T], receivers iter.Seq[signals.Receiver[T]], val T, callErr func(context.Context, error)) {
+func (r *BasePool[P]) processReceiversIter[T any](ctx context.Context, sig signals.Signal[T], recvLen int, receivers iter.Seq[signals.Receiver[T]], val T, callErr func(context.Context, error)) {
 	ctx = contextWithPool(ctx, r.backref)
-	ch := signals.AsyncReceiveIter(ctx, sig, 0, receivers, val)
+	ch := signals.AsyncReceiveIter(ctx, sig, recvLen, receivers, val)
 	for {
 		select {
 		case err, ok := <-ch:
