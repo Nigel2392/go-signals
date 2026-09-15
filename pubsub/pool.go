@@ -7,7 +7,6 @@ import (
 	"iter"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/internal/omap"
@@ -75,24 +74,11 @@ func GoNew[T any](ctx context.Context, pubsub any, opts ...PoolOption) *Pool[T] 
 }
 
 func (p *Pool[T]) goNew(ctx context.Context, _ PubSub) error {
-	if p.Data == nil {
-		go p.Loop(ctx)
-		return nil
-	}
-
-	go func(pool *Pool[T]) {
-		for h, err := range pool.WaitLoop(ctx) {
-			if err != nil {
-				pool.callErr(ctx, err)
-				continue
-			}
-
-			if err := h.Process(ctx); err != nil {
-				pool.callErr(ctx, err)
-			}
+	go func() {
+		for err := range GoLoop(ctx, p, 16) {
+			p.callErr(ctx, err)
 		}
-	}(p)
-
+	}()
 	return nil
 }
 
@@ -155,12 +141,6 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[*Pool[T], T], 
 	return func(yield func(Handler[*Pool[T], T], error) bool) {
 		wg.Wait()
 
-		if r.Data == nil {
-			panic(signals.ErrUnsupported.Wrap(
-				"cannot call Pool.Handle without having called Pool.SetChannel",
-			))
-		}
-
 		if r.Exit != nil {
 			panic(signals.ErrUnsupported.Wrap(
 				"Pool.Loop() can only be called when in the stopped state",
@@ -171,7 +151,18 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[*Pool[T], T], 
 
 		var doneCh = ctx.Done()
 		for {
-			handler, ok, err := r.cycle(ctx, doneCh, false)
+			var (
+				handler Handler[*Pool[T], T]
+				ok      bool
+				err     error
+			)
+
+			if r.Data == nil {
+				handler, ok, err = r.tryCycle(ctx)
+			} else {
+				handler, ok, err = r.cycle(ctx, doneCh, false)
+			}
+
 			if ok || err != nil {
 				if !yield(handler, err) {
 					break
@@ -184,41 +175,42 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[*Pool[T], T], 
 	}
 }
 
-func (r *Pool[T]) Cycle(ctx context.Context, resend bool) error {
+func (r *Pool[T]) Cycle(ctx context.Context, resend bool) (Processor, error) {
 	if !r.BasePool.ClientWasSetup() {
 		_, err := r.BasePool.Client(ctx) // init lazy clients
 		if err != nil {
-			return err
+			return nil, signals.ErrPool.WithCause(err).Wrap("error during client setup")
 		}
 	}
+
+	var (
+		handler Handler[*Pool[T], T]
+		ok      bool
+		err     error
+	)
 
 	if r.Data == nil {
 		if resend {
 			panic(errors.New("cannot resend data when pool is in asynchronous mode"))
 		}
 
-		return r.tryCycle(ctx)
+		handler, ok, err = r.tryCycle(ctx)
+	} else {
+		handler, ok, err = r.cycle(ctx, ctx.Done(), resend)
 	}
 
-	handler, ok, err := r.cycle(ctx, ctx.Done(), resend)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if !ok {
-		return errors.New("pool is closed")
+		return nil, ErrPoolClosed
 	}
 
-	return ProcessNow(
-		ctx, r,
-		handler.Signal,
-		handler.Receivers,
-		handler.Message,
-		handler.Value,
-	)
+	return handler, nil
 }
 
-func (r *Pool[T]) tryCycle(ctx context.Context) error {
+func (r *Pool[T]) tryCycle(ctx context.Context) (handler Handler[*Pool[T], T], ok bool, err error) {
 
 	r.Mu.RLock()
 
@@ -259,11 +251,15 @@ func (r *Pool[T]) tryCycle(ctx context.Context) error {
 
 			// see if we should exit the loop
 			if r.Closed.Load() {
-				return errors.New("pool is closed (r.Closed == true)")
+				return handler, false, errors.New("pool is closed (r.Closed == true)")
 			}
 
 			if err := ctx.Err(); err != nil {
-				return err
+				if errors.Is(err, context.Canceled) {
+					return handler, false, nil
+				}
+
+				return handler, false, err
 			}
 
 			// try to receive the data
@@ -274,12 +270,16 @@ func (r *Pool[T]) tryCycle(ctx context.Context) error {
 
 			msg, val, err := r.decodeMessage[T](ctx, payload)
 			if err != nil {
-				return err
+				return handler, true, err
 			}
 
-			return ProcessNow(
-				ctx, r, sig, sub.Cached, msg, val,
-			)
+			handler.Value = val
+			handler.Signal = sig
+			handler.Receivers = sub.Cached
+			handler.Message = msg
+			handler.BasePool = r.BasePool
+
+			return handler, true, nil
 		}
 
 		spin.Spin()
@@ -362,131 +362,8 @@ func (r *Pool[T]) cycle(ctx context.Context, doneCh <-chan struct{}, resend bool
 	return handler, true, nil
 }
 
-func (r *Pool[T]) Loop(ctx context.Context) {
-
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	var err = r.BasePool.OnClientInit(ctx, func(ctx context.Context, ps PubSub) error {
-		wg.Done()
-		return nil
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	wg.Wait()
-
-	if r.Exit != nil {
-		panic(signals.ErrUnsupported.Wrap(
-			"Pool.Loop() can only be called when in the stopped state",
-		))
-	}
-
-	if r.Data != nil {
-		panic(signals.ErrUnsupported.Wrap(
-			"Pool.Loop() cannot be called when synchronous mode is active",
-		))
-	}
-
-	tick := time.NewTicker(r.TickTime)
-	r.Exit = make(chan struct{})
-
-loop:
-	for {
-		select {
-		case <-tick.C:
-			if r.doWork(ctx) {
-				break loop
-			}
-
-		case <-ctx.Done():
-			r.callErr(ctx, ctx.Err())
-			break loop
-
-		case <-r.Exit:
-			break loop
-		}
-	}
-
-	tick.Stop()
-	close(r.Exit)
-
-	r.Mu.Lock()
-	r.Exit = nil
-	r.Mu.Unlock()
-}
-
 func (r *Pool[T]) callErr(ctx context.Context, err error) {
 	r.onErr(ctx, (*Pool[T])(r), err)
-}
-
-func (r *Pool[T]) doWork(ctx context.Context) (stop bool) {
-	r.Mu.RLock()
-
-	keys := make([]string, 0, len(r.subscribers))
-	for k := range r.subscribers {
-		keys = append(keys, k)
-	}
-
-	r.Mu.RUnlock()
-
-	for _, key := range keys {
-		r.Mu.RLock()
-		sub, ok := r.subscribers[key]
-		if !ok || sub.Pubsub == nil || sub.Receivers == nil || sub.Receivers.Length() == 0 {
-			r.Mu.RUnlock()
-			continue
-		}
-
-		sig, ok := r.signals[key]
-		if !ok {
-			r.Mu.RUnlock()
-			continue
-		}
-
-		r.Mu.RUnlock()
-
-		// rebuild subscriber cache if required
-		// allows for better concurrency
-		if sub.Dirty.Load() {
-			r.Mu.Lock()
-			sub.Undirtify()
-			r.Mu.Unlock()
-			sub.Dirty.Store(false)
-		}
-
-	drainLoop:
-		for {
-
-			// see if we should exit the loop
-			if r.Closed.Load() {
-				return true
-			}
-
-			if err := ctx.Err(); err != nil {
-				r.callErr(ctx, err)
-				return true
-			}
-
-			// try to receive the data
-			payload, hasMessage := sub.Pubsub.TryReceive()
-			if !hasMessage {
-				break drainLoop // Queue empty, move to next subscriber
-			}
-
-			msg, val, err := r.decodeMessage[T](ctx, payload)
-			if err != nil {
-				r.callErr(ctx, err)
-				return true
-			}
-
-			newCtx := ContextWithMessage(ctx, msg)
-			go r.processReceivers(newCtx, sig, sub.Cached, val, r.callErr)
-		}
-	}
-
-	return false
 }
 
 func (r *Pool[T]) newSub(signal string, createIfNotExists bool) (*subscriber.Subscriber[T], bool) {

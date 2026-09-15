@@ -218,7 +218,11 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 	}
 
 	// Trigger manual pull
-	pool.doWork(context.Background())
+	p, _ := pool.Cycle(context.Background(), false)
+	err = p.Process(context.Background())
+	if err != nil {
+		t.Errorf("expected no error, but got %v", err)
+	}
 
 	select {
 	case val := <-receivedValue:

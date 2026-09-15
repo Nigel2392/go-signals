@@ -127,17 +127,21 @@ type poolReceiver[T any] struct {
 
 // Receives the signal and value from the signal.
 func (p *poolReceiver[T]) Receive(ctx context.Context, s signals.Signal[T], v T) error {
-	return p.s.pool.Send(ctx, p.s.name, v)
+	return signals.ErrPool.WithCause(p.s.pool.Send(ctx, p.s.name, v))
 }
 
 // Disconnects the receiver from the signal.
 func (p *poolReceiver[T]) Disconnect(ctx context.Context) error {
-	return signals.ErrReceiver.Wrapf("%T cannot be disconnected", p)
+	return signals.ErrPool.WithCause(
+		signals.ErrReceiver.Wrapf("%T cannot be disconnected", p),
+	)
 }
 
 // Sets the signal on the receiver instance for later use.
 func (p *poolReceiver[T]) Bind(ctx context.Context, s signals.Signal[T]) error {
-	return signals.ErrReceiver.Wrapf("%T cannot be rebound", p)
+	return signals.ErrPool.WithCause(
+		signals.ErrReceiver.Wrapf("%T cannot be rebound", p),
+	)
 }
 
 // Retrieves the signal from the receiver instance

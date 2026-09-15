@@ -114,9 +114,14 @@ func (m *GPool) RangeT[T any](f func(value Signal[T]) (_continue bool)) {
 func (m *GPool) Send[T any](ctx context.Context, name string, value T) error {
 	var signal, ok = m.load[T](name)
 	if !ok {
-		return Err("signal not found")
+		return ErrPool.WithCause(Err("signal not found"))
 	}
-	return signal.Send(ctx, value)
+	err := signal.Send(ctx, value)
+	if err != nil {
+		return ErrPool.WithCause(err)
+	}
+
+	return nil
 }
 
 // Send a signal globally, across all signals present in the pool that accept type T.

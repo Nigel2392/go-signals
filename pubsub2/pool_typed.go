@@ -28,14 +28,11 @@ func (r *TPool[T]) Pool() *Pool {
 func (r *TPool[T]) ID() uuid.UUID {
 	return (*Pool)(r).ID()
 }
-func (r *TPool[T]) Loop(ctx context.Context) {
-	(*Pool)(r).Loop(ctx)
-}
 func (r *TPool[T]) Close() {
 	(*Pool)(r).Close()
 }
 
-func (r *TPool[T]) Cycle(ctx context.Context, resend bool) error {
+func (r *TPool[T]) Cycle(ctx context.Context, resend bool) (pubsub.Processor, error) {
 	return (*Pool)(r).Cycle(ctx, resend)
 }
 

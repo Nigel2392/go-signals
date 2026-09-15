@@ -156,7 +156,8 @@ func TestPoolWaitLoop(t *testing.T) {
 
 func TestPoolLoop(t *testing.T) {
 	client := NewMockPubSub(true)
-	pool := New(t.Context(), client, pubsub.PoolTickTime(10*time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
+	pool := GoNew(ctx, client, pubsub.PoolTickTime(10*time.Millisecond))
 
 	sig := pool.NewSignal[string](context.Background(), "test_topic")
 
@@ -168,9 +169,6 @@ func TestPoolLoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen error: %v", err)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Loop(ctx)
 
 	err = sig.Send(context.Background(), "test message")
 	if err != nil {
@@ -262,10 +260,12 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	}
 	pool.Mu.Unlock()
 
-	// doWork will pop from TryReceive, try to decode, and fail
-	pool.doWork(context.Background())
-
+	// Cycle will pop from TryReceive, try to decode, and fail
+	// calling the Process method on the handler is not required in this case,
+	// as decoding is done before processing.
+	_, lastErr = pool.Cycle(context.Background(), false)
 	if lastErr == nil {
 		t.Errorf("expected decoding error")
+		return
 	}
 }

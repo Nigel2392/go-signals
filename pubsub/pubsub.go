@@ -3,7 +3,9 @@ package pubsub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"iter"
+	"log"
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
@@ -14,19 +16,22 @@ import (
 // data across the pubsub signal pool's publishing lifecycle
 type Encoder = encoder.Encoder
 
+var ErrPoolClosed = signals.ErrPool.Wrap("pool is closed")
+
+type Processor interface {
+	Process(context.Context) error
+}
+
 type AbstractPool interface {
 	ChannelBinder
 
 	// Cycle tries to pull a single value from the pool
 	//
 	// This is a blocking operation.
-	Cycle(ctx context.Context, resend bool) error
+	Cycle(ctx context.Context, resend bool) (Processor, error)
 
 	// The instance ID of the pool
 	ID() uuid.UUID
-
-	// Loop is optimized to run in a separate goroutine, called by `go pool.Loop(ctx)`
-	Loop(ctx context.Context)
 
 	// Stop all loops and close the pool down so no further processing can occur.
 	Close()
@@ -128,4 +133,47 @@ type ChannelBinder interface {
 	Client(ctx context.Context) (PubSub, error)
 	Channel(ctx context.Context) chan Message
 	SetChannel(ctx context.Context, ch chan Message)
+}
+
+type waitPool[HANDLER Processor] interface {
+	WaitLoop(context.Context) iter.Seq2[HANDLER, error]
+}
+
+func GoLoop[POOLTYPE waitPool[HANDLER], HANDLER Processor](ctx context.Context, pool POOLTYPE, chanSize int) <-chan error {
+	var errCh = make(chan error, chanSize)
+	go func() {
+		var ct = new(0)
+
+		defer func() {
+			close(errCh)
+
+			if p := recover(); p != nil {
+				var err error
+				if e, ok := p.(error); ok {
+					err = fmt.Errorf("[%T.Loop] panic recovered: %w", pool, e)
+				} else {
+					err = fmt.Errorf("[%T.Loop] panic recovered: %v", pool, p)
+				}
+				log.Println(err)
+			}
+
+			log.Printf("loop stopped after processing %d signals", *ct)
+		}()
+
+		for h, err := range pool.WaitLoop(ctx) {
+			if err != nil {
+				errCh <- err
+				continue
+			}
+
+			err = h.Process(ctx)
+			if err != nil {
+				errCh <- err
+			}
+
+			*ct++
+		}
+	}()
+
+	return errCh
 }

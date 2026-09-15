@@ -3,7 +3,7 @@ module github.com/Nigel2392/go-signals
 go 1.27.0
 
 require (
-	github.com/Nigel2392/errors v1.0.1
+	github.com/Nigel2392/errors v1.0.2
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.22.0

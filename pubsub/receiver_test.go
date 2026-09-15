@@ -30,7 +30,7 @@ func TestReceiver(t *testing.T) {
 		t.Errorf("expected receiver to be bound to signal")
 	}
 
-	err = recv.Receive(context.Background(), sig, "hello")
+	err = signals.Receive(context.Background(), sig, recv, "hello")
 	if err != nil {
 		t.Errorf("Receive error: %v", err)
 	}

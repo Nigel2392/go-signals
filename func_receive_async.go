@@ -1,5 +1,5 @@
-//go:build !batches
-// +build !batches
+//go:build !batches && !isolate
+// +build !batches,!isolate
 
 package signals
 
@@ -7,8 +7,6 @@ import (
 	"context"
 	"iter"
 )
-
-var DEFAULT_BATCH_SIZE = 0
 
 const BATCHES = false
 
@@ -26,10 +24,10 @@ func AsyncReceiveIter[T any](ctx context.Context, s Signal[T], chSizeSuggestion 
 		var errs []error
 		for receiver := range receivers {
 			// err := receive(ctx, s, receiver, val)
-			err := receiver.Receive(ctx, s, val)
+			err := Receive(ctx, s, receiver, val)
 			if err != nil {
 				errs = append(errs, ErrReceiver.WithCause(err).Wrapf(
-					"receiver %q:", receiver.ID(),
+					"Receiver(%s)", receiver.ID(),
 				))
 			}
 		}
@@ -57,10 +55,10 @@ func AsyncReceive[T any](ctx context.Context, s Signal[T], recvs []Receiver[T], 
 		var errs []error
 		for _, receiver := range recvs {
 			// err := receive(ctx, s, receiver, value)
-			err := receiver.Receive(ctx, s, value)
+			err := Receive(ctx, s, receiver, value)
 			if err != nil {
 				errs = append(errs, ErrReceiver.WithCause(err).Wrapf(
-					"receiver %q:", receiver.ID(),
+					"Receiver(%s)", receiver.ID(),
 				))
 			}
 		}

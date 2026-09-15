@@ -8,6 +8,8 @@ import (
 	"github.com/Nigel2392/go-signals"
 )
 
+var _ Processor = (*Handler[any, any])(nil)
+
 // Execute the receivers with the provided value
 //
 // Returns an error, which might contain multiple joined errors.
@@ -18,7 +20,7 @@ func ProcessNow[POOL any, T any](ctx context.Context, p POOL, s signals.Signal[T
 	var errs []error
 	for _, receiver := range receivers {
 		// err := receive(ctx, s, receiver, value)
-		err := receiver.Receive(ctx, s, v)
+		err := signals.Receive(ctx, s, receiver, v)
 		if err != nil {
 			errs = append(errs, signals.ErrReceiver.WithCause(err).Wrapf(
 				"receiver %q:", receiver.ID(),
@@ -45,13 +47,13 @@ type Handler[POOLTYPE any, T any] struct {
 	ReceiversIter ReceiversIter[T]
 	Message       *Message
 
-	basePool *BasePool[POOLTYPE]
+	BasePool *BasePool[POOLTYPE]
 	// process sync.Once
 }
 
 func NewHandler[POOLTYPE any, T any](basePool *BasePool[POOLTYPE]) Handler[POOLTYPE, T] {
 	return Handler[POOLTYPE, T]{
-		basePool: basePool,
+		BasePool: basePool,
 	}
 }
 
@@ -65,13 +67,13 @@ func (r Handler[P, T]) Process(ctx context.Context) error {
 
 	ctx = ContextWithMessage(ctx, r.Message)
 	if r.ReceiversIter.Receivers != nil {
-		r.basePool.processReceiversIter(ctx, r.Signal, r.ReceiversIter.Len, r.ReceiversIter.Receivers, r.Value, func(_ context.Context, err error) {
+		r.BasePool.processReceiversIter(ctx, r.Signal, r.ReceiversIter.Len, r.ReceiversIter.Receivers, r.Value, func(_ context.Context, err error) {
 			mu.Lock()
 			errs = append(errs, err)
 			mu.Unlock()
 		})
 	} else {
-		r.basePool.processReceivers(ctx, r.Signal, r.Receivers, r.Value, func(_ context.Context, err error) {
+		r.BasePool.processReceivers(ctx, r.Signal, r.Receivers, r.Value, func(_ context.Context, err error) {
 			mu.Lock()
 			errs = append(errs, err)
 			mu.Unlock()

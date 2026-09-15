@@ -358,7 +358,7 @@ func TestPoolSend(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	redisPool := pubsub.New[MyType](
+	redisPool := pubsub.GoNew[MyType](
 		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
@@ -368,8 +368,6 @@ func TestPoolSend(t *testing.T) {
 			errCh <- err
 		}),
 	)
-
-	go redisPool.Loop(t.Context())
 
 	var mu = new(sync.Mutex)
 	var typeList []MyType
@@ -482,7 +480,7 @@ func TestMultiplePoolsSend(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	redisPool1 := pubsub.New[MyType](
+	redisPool1 := pubsub.GoNew[MyType](
 		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
@@ -492,8 +490,6 @@ func TestMultiplePoolsSend(t *testing.T) {
 			errCh <- err
 		}),
 	)
-
-	go redisPool1.Loop(t.Context())
 
 	var mu = new(sync.Mutex)
 	var typeList []MyType
@@ -532,7 +528,7 @@ func TestMultiplePoolsSend(t *testing.T) {
 	})
 
 	// These SHOULD activate
-	redisPool2 := pubsub.New[MyType](
+	redisPool2 := pubsub.GoNew[MyType](
 		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
@@ -543,8 +539,6 @@ func TestMultiplePoolsSend(t *testing.T) {
 			errCh <- err
 		}),
 	)
-
-	go redisPool2.Loop(t.Context())
 
 	test3 := redisPool2.NewSignal(t.Context(), "test-pool-channel-1")
 	test3.Listen(t.Context(), func(ctx context.Context, s signals.Signal[MyType], mt MyType) error {
@@ -621,18 +615,17 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	redisPool1 := pubsub2.New(
+	redisPool1 := pubsub2.GoNew(
 		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
+		pubsub.PoolClientInit(true),
 		pubsub.PoolTickTime(time.Millisecond),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			errCh <- err
 		}),
 	)
-
-	go redisPool1.Loop(t.Context())
 
 	var mu = new(sync.Mutex)
 	var typeList []MyType
@@ -671,18 +664,17 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 	})
 
 	// These SHOULD activate
-	redisPool2 := pubsub2.New(
+	redisPool2 := pubsub2.GoNew(
 		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
+		pubsub.PoolClientInit(true),
 		pubsub.PoolTickTime(time.Millisecond),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			errCh <- err
 		}),
 	)
-
-	go redisPool2.Loop(t.Context())
 
 	test3 := redisPool2.NewSignal[MyType](t.Context(), "test-pool-channel-1")
 	test3.Listen(t.Context(), func(ctx context.Context, s signals.Signal[MyType], mt MyType) error {
@@ -759,8 +751,9 @@ func TestPoolContextErr(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	redisPool := pubsub.New[MyType](
-		t.Context(),
+	var ctx, cancel = context.WithCancel(context.Background())
+	redisPool := pubsub.GoNew[MyType](
+		ctx,
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
@@ -769,10 +762,6 @@ func TestPoolContextErr(t *testing.T) {
 			errCh <- err
 		}),
 	)
-
-	var ctx, cancel = context.WithCancel(context.Background())
-
-	go redisPool.Loop(ctx)
 
 	var mu = new(sync.Mutex)
 	var typeList []MyType
@@ -835,7 +824,7 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	pool := pubsub.New[string](
+	pool := pubsub.GoNew[string](
 		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
@@ -845,8 +834,6 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 			errCh <- err
 		}),
 	)
-
-	go pool.Loop(t.Context())
 
 	var preCreate = pool.NewSignal(t.Context(), "queries.model.pre_create_test")
 	var postCreate = pool.NewSignal(t.Context(), "queries.model.post_create_test")
@@ -905,7 +892,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 		errCh = make(chan error, 10)
 	)
 
-	pool := pubsub.New[string](
+	pool := pubsub.GoNew[string](
 		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
@@ -925,8 +912,6 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 		signalID  = uuid.New().String()
 		signal    = pool.NewSignal(t.Context(), signalID)
 	)
-
-	go pool.Loop(t.Context())
 
 	var receiver = signals.NewRecv(func(ctx context.Context, sig signals.Signal[string], value string) error {
 		callCount.Add(1)
@@ -977,7 +962,7 @@ func TestSendAsync(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	pool := pubsub.New[string](
+	pool := pubsub.GoNew[string](
 		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
@@ -987,8 +972,6 @@ func TestSendAsync(t *testing.T) {
 			errCh <- err
 		}),
 	)
-
-	go pool.Loop(t.Context())
 
 	var signal = pool.NewSignal(t.Context(), uuid.New().String())
 

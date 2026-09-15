@@ -104,6 +104,8 @@ func Listen[T any](ctx context.Context, name string, r func(context.Context, Sig
 	return defaultSignalPool.Listen(ctx, name, r)
 }
 
+var DEFAULT_BATCH_SIZE = 0
+
 type batchSizeContextKey struct{}
 
 func ContextWithBatchSize(ctx context.Context, size int) context.Context {
@@ -117,6 +119,15 @@ func BatchSize(ctx context.Context) int {
 	return DEFAULT_BATCH_SIZE
 }
 
+//	type ReceiverBackend[T any] interface {
+//		AsyncReceiveIter(ctx context.Context, s Signal[T], chSizeSuggestion int, receivers iter.Seq[Receiver[T]], val T) <-chan error
+//		AsyncReceive(ctx context.Context, s Signal[T], recvs []Receiver[T], value T) <-chan error
+//	}
+//
+//	func GetBackendFromSignal[T any](ctx context.Context, sig Signal[T]) ReceiverBackend[T] {
+//
+//	}
+
 // Asynchronously send the value across all receivers.
 //
 // Returns a channel of error.
@@ -126,6 +137,8 @@ func BatchSize(ctx context.Context) int {
 // If the signal does not implement the [ReceiverProvider], [ReceiverIterProvider] or [ReceiverIterLenProvider] interface, we will fall back to
 // creating a goroutine (closure) where [Signal.Send] is called and the error (if any)
 // returned through the channel.
+//
+// The returned channel **MUST** be consumed, otherwise deadlocks could arise.
 func SendAsync[T any](ctx context.Context, sig Signal[T], val T, provider ...any) <-chan error {
 	var _provider any
 	if len(provider) > 0 && provider[0] != nil {

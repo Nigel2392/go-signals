@@ -25,7 +25,7 @@ func (r *receiver[T]) Receive(ctx context.Context, s Signal[T], value T) error {
 // Disconnects the receiver from the signal.
 func (r *receiver[T]) Disconnect(ctx context.Context) error {
 	if r.signal == nil {
-		return Err("receiver is not connected to a signal")
+		return ErrReceiver.WithCause(Err("receiver is not connected to a signal"))
 	}
 	r.signal = nil
 	return nil

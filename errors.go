@@ -10,9 +10,11 @@ const (
 	CodeNotSupported  errors.GoCode = "NotSupported"
 	CodeSignalError   errors.GoCode = "SignalError"
 	CodeReceiverError errors.GoCode = "ReceiverError"
+	CodePoolError     errors.GoCode = "PoolError"
 )
 
 var (
+	ErrPool        = errors.New(CodePoolError, "pool error")
 	ErrSignal      = errors.New(CodeSignalError, "signal error")
 	ErrReceiver    = errors.New(CodeReceiverError, "receiver error")
 	ErrUnsupported = errors.New(CodeNotSupported, "operation not supported")

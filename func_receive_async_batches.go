@@ -11,7 +11,9 @@ import (
 	"sync"
 )
 
-var DEFAULT_BATCH_SIZE = 500
+func init() {
+	DEFAULT_BATCH_SIZE = 500
+}
 
 const BATCHES = true
 
@@ -126,8 +128,12 @@ func AsyncReceiveIter[T any](ctx context.Context, s Signal[T], recvLen int, rece
 		defer close(errChan)
 
 		var (
-			wg    = new(sync.WaitGroup)
+			wg = new(sync.WaitGroup)
+
+			// as pointer, otherwise pool.Put cant
+			// properly mark items as being reusable
 			batch = pool.Get().(*[]Receiver[T])
+
 			// batch = make([]Receiver[T], 0, batchSize)
 		)
 
@@ -147,12 +153,16 @@ func AsyncReceiveIter[T any](ctx context.Context, s Signal[T], recvLen int, rece
 				batch = pool.Get().(*[]Receiver[T])
 				// batch = make([]Receiver[T], 0, batchSize)
 
+				// yield to other goroutines
+				//
+				// ensures the pool actually gets used,
+				// i.e: a new slice doesn't get allocated
+				// for **every** receiver
 				if (i & 0x03) == 0 {
 					runtime.Gosched()
 				}
 
 				i++
-
 			}
 		}
 
@@ -214,12 +224,14 @@ func processBatchPool[T any](ctx context.Context, wg *sync.WaitGroup, errChan ch
 
 	var errs []error
 	for _, receiver := range *list {
-		err := receiver.Receive(ctx, signal, value)
+		err := Receive(ctx, signal, receiver, value)
 		if err != nil {
 			if errs == nil {
 				errs = make([]error, 0, 4)
 			}
-			errs = append(errs, err)
+			errs = append(errs, ErrReceiver.WithCause(err).Wrapf(
+				"Receiver(%s)", receiver.ID(),
+			))
 		}
 	}
 
@@ -233,12 +245,14 @@ func processBatch[T any](ctx context.Context, wg *sync.WaitGroup, errChan chan<-
 
 	var errs []error
 	for _, receiver := range list {
-		err := receiver.Receive(ctx, signal, value)
+		err := Receive(ctx, signal, receiver, value)
 		if err != nil {
 			if errs == nil {
 				errs = make([]error, 0, 4)
 			}
-			errs = append(errs, err)
+			errs = append(errs, ErrReceiver.WithCause(err).Wrapf(
+				"Receiver(%s)", receiver.ID(),
+			))
 		}
 	}
 

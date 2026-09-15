@@ -246,7 +246,7 @@ func TestPoolSend(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	pool := pubsub.New[MyType](
+	pool := pubsub.GoNew[MyType](
 		t.Context(),
 		PubSub(true),
 		pubsub.PoolTickTime(time.Millisecond*10),
@@ -255,8 +255,6 @@ func TestPoolSend(t *testing.T) {
 			errCh <- err
 		}),
 	)
-
-	go pool.Loop(t.Context())
 
 	var mu = new(sync.Mutex)
 	var typeList []MyType
@@ -349,18 +347,15 @@ func TestPoolContextErr(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	pool := pubsub.New[MyType](
-		t.Context(),
+	var ctx, cancel = context.WithCancel(context.Background())
+	pool := pubsub.GoNew[MyType](
+		ctx,
 		PubSub(true),
 		pubsub.PoolTickTime(time.Millisecond*10),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
 	)
-
-	var ctx, cancel = context.WithCancel(context.Background())
-
-	go pool.Loop(ctx)
 
 	var mu = new(sync.Mutex)
 	var typeList []MyType
@@ -416,15 +411,13 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	pool := pubsub.New[string](
+	pool := pubsub.GoNew[string](
 		t.Context(),
 		PubSub(true),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
 	)
-
-	go pool.Loop(t.Context())
 
 	var preCreate = pool.NewSignal(t.Context(), "queries.model.pre_create_test")
 	var postCreate = pool.NewSignal(t.Context(), "queries.model.post_create_test")
@@ -478,7 +471,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 		errCh = make(chan error, 10)
 	)
 
-	pool := pubsub.New[string](
+	pool := pubsub.GoNew[string](
 		t.Context(),
 		PubSub(true),
 		// pubsub.PoolTickTime(time.Millisecond/5),
@@ -487,8 +480,6 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 			errCh <- err
 		}),
 	)
-
-	go pool.Loop(t.Context())
 
 	t.Cleanup(func() {
 		// pool.Close()
@@ -542,15 +533,13 @@ func TestSendAsync(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	pool := pubsub.New[string](
+	pool := pubsub.GoNew[string](
 		t.Context(),
 		PubSub(true),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
 	)
-
-	go pool.Loop(t.Context())
 
 	var signal = pool.NewSignal(t.Context(), uuid.New().String())
 

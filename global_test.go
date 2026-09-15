@@ -396,7 +396,7 @@ func BenchmarkAsyncSignalTypes(b *testing.B) {
 		benchmarks = append(benchmarks,
 			benchmark{test, testReceiverProvider[*string]{test.signal}},
 			benchmark{test, testReceiverIterProvider[*string]{test.signal}},
-			benchmark{test, testReceiverIterProvider[*string]{test.signal}},
+			benchmark{test, testReceiverIterLenProvider[*string]{test.signal}},
 		)
 	}
 

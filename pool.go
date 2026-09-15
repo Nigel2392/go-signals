@@ -69,9 +69,13 @@ func (m *Pool[T]) Range(f func(value Signal[T]) bool) {
 func (m *Pool[T]) Send(ctx context.Context, name string, value T) error {
 	var signal, ok = m.load(name)
 	if !ok {
-		return Err("signal not found")
+		return ErrPool.WithCause(Err("signal not found"))
 	}
-	return signal.Send(ctx, value)
+	err := signal.Send(ctx, value)
+	if err != nil {
+		return ErrPool.WithCause(err).Wrap("Send")
+	}
+	return nil
 }
 
 // Send a signal globally, across all signals present in the pool.
@@ -83,7 +87,10 @@ func (m *Pool[T]) SendGlobal(ctx context.Context, value T) error {
 		err = signal.Send(ctx, value)
 		return err == nil
 	})
-	return err
+	if err != nil {
+		return ErrPool.WithCause(err).Wrap("SendGlobal")
+	}
+	return nil
 }
 
 // Exists checks if a signal exists in the pool.

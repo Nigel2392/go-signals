@@ -77,10 +77,10 @@ func (s *signal[T]) Send(ctx context.Context, value T) error {
 	var err error
 	var errs []error
 	for _, receiver := range recvs {
-		err = receiver.Receive(ctx, s, value)
+		err = Receive(ctx, s, receiver, value)
 		if err != nil {
 			errs = append(errs, ErrReceiver.WithCause(err).Wrapf(
-				"receiver %q:", receiver.ID(),
+				"Receiver(%s)", receiver.ID(),
 			))
 		}
 	}

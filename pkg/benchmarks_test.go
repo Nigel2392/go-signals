@@ -264,9 +264,9 @@ func BenchmarkPkg(b *testing.B) {
 			})
 
 			tests = append(tests, benchmark{
-				name: namedTest(pool.pkgName(), bench.name, "Cycle", "Sync", strconv.Itoa(totalReceivers)),
+				name: namedTest(pool.pkgName(), bench.name, "Cycle", "ChanSelect", strconv.Itoa(totalReceivers)),
 				list: []string{
-					"Cycle", "Sync", pool.pkgName(), bench.name, "0", strconv.Itoa(totalReceivers),
+					"Cycle", "ChanSelect", pool.pkgName(), bench.name, "0", strconv.Itoa(totalReceivers),
 				},
 				exec: func(b *testing.B) {
 					p := pool.newPool(
@@ -289,7 +289,13 @@ func BenchmarkPkg(b *testing.B) {
 							b.Error(err)
 						}
 
-						err = p.Cycle(b.Context(), false)
+						h, err := p.Cycle(b.Context(), false)
+						if err != nil {
+							b.Error(err)
+							continue
+						}
+
+						err = h.Process(b.Context())
 						if err != nil {
 							b.Error(err)
 						}
@@ -306,9 +312,9 @@ func BenchmarkPkg(b *testing.B) {
 			})
 
 			tests = append(tests, benchmark{
-				name: namedTest(pool.pkgName(), bench.name, "Cycle", "Async", strconv.Itoa(totalReceivers)),
+				name: namedTest(pool.pkgName(), bench.name, "Cycle", "TryLoop", strconv.Itoa(totalReceivers)),
 				list: []string{
-					"Cycle", "Async", pool.pkgName(), bench.name, "0", strconv.Itoa(totalReceivers),
+					"Cycle", "TryLoop", pool.pkgName(), bench.name, "0", strconv.Itoa(totalReceivers),
 				},
 				exec: func(b *testing.B) {
 					p := pool.newPool(
@@ -331,7 +337,13 @@ func BenchmarkPkg(b *testing.B) {
 							b.Error(err)
 						}
 
-						err = p.Cycle(b.Context(), false)
+						h, err := p.Cycle(b.Context(), false)
+						if err != nil {
+							b.Error(err)
+							continue
+						}
+
+						err = h.Process(b.Context())
 						if err != nil {
 							b.Error(err)
 						}
@@ -516,18 +528,27 @@ func TestPkg(t *testing.T) {
 					t.Fatalf("Failed to execute cross-trigger: %s", err.Error())
 				}
 
-				if err := p.Cycle(t.Context(), false); err != nil {
+				h, err := p.Cycle(t.Context(), false)
+				if err != nil {
 					t.Fatalf("error during cycle: %v", err)
 				}
+				if err := h.Process(t.Context()); err != nil {
+					t.Fatalf("error during process: %v", err)
+				}
 
-				if err := p.Cycle(t.Context(), false); err != nil {
+				h, err = p.Cycle(t.Context(), false)
+				if err != nil {
 					t.Fatalf("error during cycle: %v", err)
+				}
+				if err := h.Process(t.Context()); err != nil {
+					t.Fatalf("error during process: %v", err)
 				}
 
 				ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(time.Second))
 				defer cancel()
 
-				if err := p.Cycle(ctx, false); !errors.Is(err, context.DeadlineExceeded) {
+				h, err = p.Cycle(ctx, false)
+				if !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("error during cycle: %v", err)
 				}
 
