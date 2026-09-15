@@ -21,10 +21,5 @@ func Receive[T any](ctx context.Context, s Signal[T], r Receiver[T], val T) (err
 	}()
 
 	err = r.Receive(ctx, s, val)
-	if err != nil {
-		err = ErrReceiver.WithCause(err).Wrapf(
-			"Receiver(%s)", r.ID(),
-		)
-	}
 	return
 }

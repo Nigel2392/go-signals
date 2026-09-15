@@ -22,7 +22,7 @@ func (s *Spinner) Spin() {
 	case i <= 100:
 		// yield to scheduler every 16 spins
 		// faster than modulo
-		if (i & 0x0F) == 0 {
+		if i == 0 || (i&0x0F) == 0 {
 			runtime.Gosched()
 		} else {
 			Pause()

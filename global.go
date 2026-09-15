@@ -139,35 +139,32 @@ func BatchSize(ctx context.Context) int {
 // returned through the channel.
 //
 // The returned channel **MUST** be consumed, otherwise deadlocks could arise.
-func SendAsync[T any](ctx context.Context, sig Signal[T], val T, provider ...any) <-chan error {
-	var _provider any
-	if len(provider) > 0 && provider[0] != nil {
-		_provider = provider[0]
-	} else {
-		_provider = sig
+func SendAsync[T any](ctx context.Context, sig Signal[T], val T) <-chan error {
+	if s, ok := sig.(ReceiverProvider[T]); ok {
+		return AsyncReceive(ctx, sig, s.Receivers(ctx), val)
 	}
 
-	switch s := _provider.(type) {
-	case ReceiverProvider[T]:
-		return AsyncReceive(ctx, sig, s.Receivers(ctx), val)
-
-	case ReceiverIterLenProvider[T]:
+	if s, ok := sig.(ReceiverIterLenProvider[T]); ok {
 		var recvLen, receiverIter = s.Receivers(ctx)
 		return AsyncReceiveIter(ctx, sig, recvLen, receiverIter, val)
-
-	case ReceiverIterProvider[T]:
-		return AsyncReceiveIter(ctx, sig, 0, s.Receivers(ctx), val)
-
-	default:
-		var errChan chan error = make(chan error, 1)
-		go func() {
-			defer close(errChan)
-			if err := sig.Send(ctx, val); err != nil {
-				errChan <- err
-			}
-		}()
-		return errChan
 	}
+
+	if s, ok := sig.(ReceiverIterProvider[T]); ok {
+		return AsyncReceiveIter(ctx, sig, 0, s.Receivers(ctx), val)
+	}
+
+	return sendAsyncFallback(ctx, sig, val)
+}
+
+func sendAsyncFallback[T any](ctx context.Context, sig Signal[T], val T) <-chan error {
+	var errChan chan error = make(chan error, 1)
+	go func() {
+		defer close(errChan)
+		if err := sig.Send(ctx, val); err != nil {
+			errChan <- err
+		}
+	}()
+	return errChan
 }
 
 //	func transmitIter[T any](ctx context.Context, s Signal[T], chSizeSuggestion int, recvs iter.Seq[Receiver[T]], value T) <-chan error {

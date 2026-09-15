@@ -228,13 +228,28 @@ func (r *Pool) Cycle(ctx context.Context, resend bool) (pubsub.Processor, error)
 	return handler, nil
 }
 
+type tryCycleSnapshot[T any] struct {
+	name       string
+	sig        PoolSignal
+	subscriber *subscriber.Subscriber[T]
+}
+
 func (r *Pool) tryCycle(ctx context.Context) (handler pubsub.Handler[*Pool, any], ok bool, err error) {
 
 	r.Mu.RLock()
 
-	keys := make([]string, 0, len(r.subscribers))
-	for k := range r.subscribers {
-		keys = append(keys, k)
+	snapShots := make([]tryCycleSnapshot[any], 0, len(r.subscribers))
+	for k, sub := range r.subscribers {
+		sig, ok := r.signals[k]
+		if !ok {
+			continue
+		}
+
+		snapShots = append(snapShots, tryCycleSnapshot[any]{
+			name:       k,
+			sig:        sig,
+			subscriber: sub,
+		})
 	}
 
 	r.Mu.RUnlock()
@@ -242,29 +257,15 @@ func (r *Pool) tryCycle(ctx context.Context) (handler pubsub.Handler[*Pool, any]
 	var spin spinner.Spinner
 	for {
 	keyLoop:
-		for _, key := range keys {
-			r.Mu.RLock()
-			sub, ok := r.subscribers[key]
-			if !ok || sub.Pubsub == nil || sub.Receivers == nil || sub.Receivers.Length() == 0 {
-				r.Mu.RUnlock()
-				continue keyLoop
-			}
-
-			sig, ok := r.signals[key]
-			if !ok {
-				r.Mu.RUnlock()
-				continue keyLoop
-			}
-
-			r.Mu.RUnlock()
+		for _, snapshot := range snapShots {
 
 			// rebuild subscriber cache if required
 			// allows for better concurrency
-			if sub.Dirty.Load() {
+			if snapshot.subscriber.Dirty.Load() {
 				r.Mu.Lock()
-				sub.Undirtify()
+				snapshot.subscriber.Undirtify()
 				r.Mu.Unlock()
-				sub.Dirty.Store(false)
+				snapshot.subscriber.Dirty.Store(false)
 			}
 
 			// see if we should exit the loop
@@ -281,19 +282,19 @@ func (r *Pool) tryCycle(ctx context.Context) (handler pubsub.Handler[*Pool, any]
 			}
 
 			// try to receive the data
-			payload, hasMessage := sub.Pubsub.TryReceive()
+			payload, hasMessage := snapshot.subscriber.Pubsub.TryReceive()
 			if !hasMessage {
 				continue keyLoop // Queue empty, move to next subscriber
 			}
 
-			msg, val, err := r.decodeMessage(ctx, sig.MsgType(), payload)
+			msg, val, err := r.decodeMessage(ctx, snapshot.sig.MsgType(), payload)
 			if err != nil {
 				return handler, true, err
 			}
 
 			handler.Value = val
-			handler.Signal = sig
-			handler.Receivers = sub.Cached
+			handler.Signal = snapshot.sig
+			handler.Receivers = snapshot.subscriber.Cached
 			handler.Message = msg
 			handler.BasePool = r.BasePool
 

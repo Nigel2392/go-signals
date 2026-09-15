@@ -139,7 +139,7 @@ type waitPool[HANDLER Processor] interface {
 	WaitLoop(context.Context) iter.Seq2[HANDLER, error]
 }
 
-func GoLoop[POOLTYPE waitPool[HANDLER], HANDLER Processor](ctx context.Context, pool POOLTYPE, chanSize int) <-chan error {
+func GoLoop[POOLTYPE waitPool[HANDLER], HANDLER Processor](ctx context.Context, pool POOLTYPE, chanSize int, autoDrain ...bool) <-chan error {
 	var errCh = make(chan error, chanSize)
 	go func() {
 		var ct = new(0)

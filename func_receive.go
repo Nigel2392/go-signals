@@ -7,6 +7,6 @@ import (
 	"context"
 )
 
-func Receive[T any](ctx context.Context, s Signal[T], r Receiver[T], val T) error {
+func Receive[T any](ctx context.Context, s Signal[T], r Receiver[T], val T) (err error) {
 	return r.Receive(ctx, s, val)
 }

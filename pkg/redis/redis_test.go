@@ -704,7 +704,7 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 			)
 		}
 
-		t.Logf("Message: %v", msg)
+		t.Logf("FOURTH: Message: %v", msg)
 
 		return nil
 	})
@@ -897,6 +897,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
+		pubsub.PoolClientInit(true),
 		pubsub.PoolTickTime(time.Microsecond*200), // 0.2ms
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err

@@ -210,13 +210,28 @@ func (r *Pool[T]) Cycle(ctx context.Context, resend bool) (Processor, error) {
 	return handler, nil
 }
 
+type tryCycleSnapshot[T any] struct {
+	name       string
+	sig        *signal[T]
+	subscriber *subscriber.Subscriber[T]
+}
+
 func (r *Pool[T]) tryCycle(ctx context.Context) (handler Handler[*Pool[T], T], ok bool, err error) {
 
 	r.Mu.RLock()
 
-	keys := make([]string, 0, len(r.subscribers))
-	for k := range r.subscribers {
-		keys = append(keys, k)
+	snapShots := make([]tryCycleSnapshot[T], 0, len(r.subscribers))
+	for k, sub := range r.subscribers {
+		sig, ok := r.signals[k]
+		if !ok {
+			continue
+		}
+
+		snapShots = append(snapShots, tryCycleSnapshot[T]{
+			name:       k,
+			sig:        sig,
+			subscriber: sub,
+		})
 	}
 
 	r.Mu.RUnlock()
@@ -224,29 +239,15 @@ func (r *Pool[T]) tryCycle(ctx context.Context) (handler Handler[*Pool[T], T], o
 	var spin spinner.Spinner
 	for {
 	keyLoop:
-		for _, key := range keys {
-			r.Mu.RLock()
-			sub, ok := r.subscribers[key]
-			if !ok || sub.Pubsub == nil || sub.Receivers == nil || sub.Receivers.Length() == 0 {
-				r.Mu.RUnlock()
-				continue keyLoop
-			}
-
-			sig, ok := r.signals[key]
-			if !ok {
-				r.Mu.RUnlock()
-				continue keyLoop
-			}
-
-			r.Mu.RUnlock()
+		for _, snapshot := range snapShots {
 
 			// rebuild subscriber cache if required
 			// allows for better concurrency
-			if sub.Dirty.Load() {
+			if snapshot.subscriber.Dirty.Load() {
 				r.Mu.Lock()
-				sub.Undirtify()
+				snapshot.subscriber.Undirtify()
 				r.Mu.Unlock()
-				sub.Dirty.Store(false)
+				snapshot.subscriber.Dirty.Store(false)
 			}
 
 			// see if we should exit the loop
@@ -263,7 +264,7 @@ func (r *Pool[T]) tryCycle(ctx context.Context) (handler Handler[*Pool[T], T], o
 			}
 
 			// try to receive the data
-			payload, hasMessage := sub.Pubsub.TryReceive()
+			payload, hasMessage := snapshot.subscriber.Pubsub.TryReceive()
 			if !hasMessage {
 				continue keyLoop // Queue empty, move to next subscriber
 			}
@@ -274,8 +275,8 @@ func (r *Pool[T]) tryCycle(ctx context.Context) (handler Handler[*Pool[T], T], o
 			}
 
 			handler.Value = val
-			handler.Signal = sig
-			handler.Receivers = sub.Cached
+			handler.Signal = snapshot.sig
+			handler.Receivers = snapshot.subscriber.Cached
 			handler.Message = msg
 			handler.BasePool = r.BasePool
 
