@@ -18,6 +18,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func drain(b testing.TB, c <-chan error) {
+	b.Helper()
+	for err := range c {
+		b.Errorf("error from error channel: %v", err)
+	}
+}
+
 var totalReceivers = 32000
 
 func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
@@ -66,7 +73,7 @@ func BenchmarkSignals(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			drain(b, h.Process(b.Context()))
 			wg.Done()
 		}
 	}()
@@ -132,7 +139,7 @@ func BenchmarkSignalsParallel(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			drain(b, h.Process(b.Context()))
 			wg.Done()
 		}
 	}()
@@ -196,7 +203,7 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			drain(b, h.Process(b.Context()))
 			wg.Done()
 		}
 	}()
@@ -262,7 +269,7 @@ func BenchmarkSignalsPubsub2Parallel(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			drain(b, h.Process(b.Context()))
 			wg.Done()
 		}
 	}()
@@ -324,7 +331,7 @@ func TestSignalsSynchronous(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			h.Process(t.Context())
+			drain(t, h.Process(t.Context()))
 			wg.Done()
 		}
 	}()

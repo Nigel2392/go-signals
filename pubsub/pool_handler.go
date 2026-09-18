@@ -3,12 +3,11 @@ package pubsub
 import (
 	"context"
 	"iter"
-	"sync"
 
 	"github.com/Nigel2392/go-signals"
 )
 
-var _ Processor = (*Handler[any, any])(nil)
+var _ Processor = (*Handler[AbstractPool, any])(nil)
 
 // Execute the receivers with the provided value
 //
@@ -40,7 +39,7 @@ type ReceiversIter[T any] struct {
 	Receivers iter.Seq[signals.Receiver[T]]
 }
 
-type Handler[POOLTYPE any, T any] struct {
+type Handler[POOLTYPE AbstractPool, T any] struct {
 	Value         T
 	Signal        signals.Signal[T]
 	Receivers     []signals.Receiver[T]
@@ -51,7 +50,7 @@ type Handler[POOLTYPE any, T any] struct {
 	// process sync.Once
 }
 
-func NewHandler[POOLTYPE any, T any](basePool *BasePool[POOLTYPE]) Handler[POOLTYPE, T] {
+func NewHandler[POOLTYPE AbstractPool, T any](basePool *BasePool[POOLTYPE]) Handler[POOLTYPE, T] {
 	return Handler[POOLTYPE, T]{
 		BasePool: basePool,
 	}
@@ -61,28 +60,18 @@ func NewHandler[POOLTYPE any, T any](basePool *BasePool[POOLTYPE]) Handler[POOLT
 //
 // Allows for changing the value before it is sent to the receivers, as well as providing
 // a custom [context.Context] with a possible deadline
-func (r Handler[P, T]) Process(ctx context.Context) error {
-	var errs []error
-	var mu sync.Mutex
-
+func (r Handler[P, T]) Process(ctx context.Context) <-chan error {
+	ctx = contextWithPool(ctx, r.BasePool.backref)
 	ctx = ContextWithMessage(ctx, r.Message)
+
 	if r.ReceiversIter.Receivers != nil {
-		r.BasePool.P.processReceiversIter(ctx, r.Signal, r.ReceiversIter.Len, r.ReceiversIter.Receivers, r.Value, func(_ context.Context, err error) {
-			mu.Lock()
-			errs = append(errs, err)
-			mu.Unlock()
-		})
-	} else {
-		r.BasePool.P.processReceivers(ctx, r.Signal, r.Receivers, r.Value, func(_ context.Context, err error) {
-			mu.Lock()
-			errs = append(errs, err)
-			mu.Unlock()
-		})
+		return signals.AsyncReceiveIter(
+			ctx, r.Signal,
+			r.ReceiversIter.Len,
+			r.ReceiversIter.Receivers,
+			r.Value,
+		)
 	}
 
-	if len(errs) > 0 {
-		return signals.Err("error while executing receivers", errs...)
-	}
-
-	return nil
+	return signals.AsyncReceive(ctx, r.Signal, r.Receivers, r.Value)
 }

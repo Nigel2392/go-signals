@@ -129,7 +129,7 @@ func TestPoolWaitLoop(t *testing.T) {
 			t.Errorf("WaitLoop error: %v", err)
 		}
 
-		if err := handler.Process(t.Context()); err != nil {
+		if err, _ := <-handler.Process(t.Context()); err != nil {
 			t.Errorf("Process error: %v", err)
 		}
 

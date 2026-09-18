@@ -59,7 +59,9 @@ func BenchmarkSignals(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			for err := range h.Process(b.Context()) {
+				b.Errorf("error during benchmark: %v", err)
+			}
 			wg.Done()
 		}
 	}()
@@ -129,7 +131,9 @@ func BenchmarkSignalsSendAsync(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			for err := range h.Process(b.Context()) {
+				b.Errorf("error during benchmark: %v", err)
+			}
 			wg.Done()
 		}
 	}()
@@ -235,7 +239,7 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 
 	// Trigger manual pull
 	p, _ := pool.Cycle(context.Background(), false)
-	err = p.Process(context.Background())
+	err, _ = <-p.Process(context.Background())
 	if err != nil {
 		t.Errorf("expected no error, but got %v", err)
 	}

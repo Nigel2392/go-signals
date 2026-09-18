@@ -65,6 +65,14 @@ type MyType struct {
 //			}
 //		}
 //	}
+
+func drain(b testing.TB, c <-chan error) {
+	b.Helper()
+	for err := range c {
+		b.Errorf("error from error channel: %v", err)
+	}
+}
+
 func BenchmarkSignals(b *testing.B) {
 
 	pool := pubsub.New[*string](
@@ -95,7 +103,7 @@ func BenchmarkSignals(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			drain(b, h.Process(b.Context()))
 			wg.Done()
 		}
 	}()
@@ -156,7 +164,7 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			drain(b, h.Process(b.Context()))
 			wg.Done()
 		}
 	}()
@@ -218,7 +226,7 @@ func TestSignalsSynchronous(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			h.Process(t.Context())
+			drain(t, h.Process(t.Context()))
 			wg.Done()
 		}
 	}()

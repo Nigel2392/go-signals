@@ -20,6 +20,13 @@ func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc fun
 	}
 }
 
+func drain(b testing.TB, c <-chan error) {
+	b.Helper()
+	for err := range c {
+		b.Errorf("error from error channel: %v", err)
+	}
+}
+
 func BenchmarkSignals(b *testing.B) {
 
 	pool := New[string](
@@ -54,7 +61,7 @@ func BenchmarkSignals(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			drain(b, h.Process(b.Context()))
 			wg.Done()
 		}
 	}()
@@ -118,7 +125,7 @@ func BenchmarkSignalsParralel(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			drain(b, h.Process(b.Context()))
 			wg.Done()
 		}
 	}()
@@ -219,7 +226,7 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 
 	// Trigger manual pull
 	p, _ := pool.Cycle(context.Background(), false)
-	err = p.Process(context.Background())
+	err, _ = <-p.Process(context.Background())
 	if err != nil {
 		t.Errorf("expected no error, but got %v", err)
 	}

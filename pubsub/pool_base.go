@@ -3,20 +3,24 @@ package pubsub
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"iter"
+	"log"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/internal/spinner"
+	"github.com/Nigel2392/go-signals/internal/subscriber"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
 )
 
 var (
-	_ ChannelBinder = (*BasePool[ChannelBinder])(nil)
-	_ ConfigPool    = (*BasePool[ChannelBinder])(nil)
+	_ ChannelBinder = (*BasePool[AbstractPool])(nil)
+	_ ConfigPool    = (*BasePool[AbstractPool])(nil)
 )
 
 const (
@@ -25,6 +29,10 @@ const (
 	bpf_autoInit
 	bpf_clientBound
 )
+
+func defaultPoolError[POOLTYPE any](ctx context.Context, p POOLTYPE, err error) {
+	log.Printf("error in pool %T: %v", p, err)
+}
 
 //
 //	type recusionContext int // zero value is context key
@@ -39,12 +47,6 @@ const (
 //		c, _ := ctx.Value(recusionContext(0)).(recusionContext)
 //		return c >= recusionContext(depth)
 //	}
-
-type minimumPool interface {
-	ID() uuid.UUID
-	Close()
-	ChannelBinder
-}
 
 type clientSetup struct {
 	// the underlying interface that handles
@@ -62,13 +64,13 @@ type clientSetup struct {
 
 // internal struct to separate out methods from the basepool so
 // they dont automatically become available when [BasePool] gets embedded in a [Pool]
-type p[POOLTYPE any] struct {
+type p[POOLTYPE AbstractPool] struct {
 	b  *BasePool[POOLTYPE]
 	cs clientSetup
 	Mu *sync.RWMutex
 }
 
-type BasePool[POOLTYPE any] struct {
+type BasePool[POOLTYPE AbstractPool] struct {
 	P p[POOLTYPE]
 
 	// inst provides the instance ID for this pool object.
@@ -102,10 +104,14 @@ type BasePool[POOLTYPE any] struct {
 	Closed atomic.Bool
 	Exit   chan struct{}
 
+	// special function to handle any
+	// errors that occur during the async/loop process
+	onErr func(context.Context, POOLTYPE, error)
+
 	backref POOLTYPE
 }
 
-func NewBasePool[POOLTYPE minimumPool](clientCtx context.Context, pubsub any) *BasePool[POOLTYPE] {
+func NewBasePool[POOLTYPE AbstractPool](clientCtx context.Context, pubsub any) *BasePool[POOLTYPE] {
 	pool := &BasePool[POOLTYPE]{}
 
 	switch c := pubsub.(type) {
@@ -143,9 +149,17 @@ func (r *BasePool[P]) WithReference(ref P) {
 	r.backref = ref
 }
 
+func (p *BasePool[P]) WithOnError(fn func(context.Context, P, error)) {
+	p.onErr = fn
+}
+
 func (r *BasePool[P]) Initialize(ctx context.Context) error {
 	if r.Encoder == nil {
 		r.Encoder = encoder.NewJSONEncoder()
+	}
+
+	if r.onErr == nil {
+		r.onErr = defaultPoolError
 	}
 
 	if (r.Inst == uuid.UUID{}) {
@@ -237,39 +251,7 @@ func (r *BasePool[P]) Send[T any](ctx context.Context, topic string, value T) er
 	return nil
 }
 
-func (r *p[P]) newMessage[T any](ctx context.Context, topic string, value T) (message *Message, err error) {
-	var data []byte
-	if any(value) != nil {
-		data, err = r.b.Encoder.EncodeBytes(value)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	message = new(Message{
-		Channel: topic,
-		Sender:  r.b.Inst,
-		Data:    data,
-		Meta:    MsgMetaFromContext(ctx, r.b.backref),
-	})
-
-	if message.Meta == nil {
-		message.Meta = make(map[string]any)
-	}
-
-	c, err := r.b.Client(ctx)
-	if err != nil {
-		return message, err
-	}
-
-	if maker, ok := c.(PubSubMsgMaker); ok {
-		message = maker.MakeMessage(ctx, topic, message, true)
-	}
-
-	return message, nil
-}
-
-func (r *p[P]) DecodeMessage[T any](_ context.Context, typ reflect.Type, data []byte) (msg *Message, sentVal T, err error) {
+func (r *p[P]) decodeMessage[T any](_ context.Context, typ reflect.Type, data []byte) (msg *Message, sentVal T, err error) {
 	payload := new(Message)
 	err = r.b.Encoder.Decode(bytes.NewReader(data), payload)
 	if err != nil {
@@ -307,6 +289,42 @@ func (r *p[P]) OnClientInit(ctx context.Context, fn func(context.Context, PubSub
 	r.cs.onClientInit = append(r.cs.onClientInit, fn)
 	r.cs.cmu.Unlock()
 	return nil
+}
+
+func (p *p[P]) OnError(ctx context.Context, err error) {
+	p.b.onErr(ctx, p.b.backref, err)
+}
+
+func (r *p[P]) newMessage[T any](ctx context.Context, topic string, value T) (message *Message, err error) {
+	var data []byte
+	if any(value) != nil {
+		data, err = r.b.Encoder.EncodeBytes(value)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	message = new(Message{
+		Channel: topic,
+		Sender:  r.b.Inst,
+		Data:    data,
+		Meta:    MsgMetaFromContext(ctx, r.b.backref),
+	})
+
+	if message.Meta == nil {
+		message.Meta = make(map[string]any)
+	}
+
+	c, err := r.b.Client(ctx)
+	if err != nil {
+		return message, err
+	}
+
+	if maker, ok := c.(PubSubMsgMaker); ok {
+		message = maker.MakeMessage(ctx, topic, message, true)
+	}
+
+	return message, nil
 }
 
 func (r *p[P]) setupClient(ctx context.Context) error {
@@ -357,35 +375,238 @@ func (r *p[P]) setupClient(ctx context.Context) error {
 	return nil
 }
 
-func (r *p[P]) processReceiversIter[T any](ctx context.Context, sig signals.Signal[T], recvLen int, receivers iter.Seq[signals.Receiver[T]], val T, callErr func(context.Context, error)) {
-	ctx = contextWithPool(ctx, r.b.backref)
-	ch := signals.AsyncReceiveIter(ctx, sig, recvLen, receivers, val)
-	for {
-		select {
-		case err, ok := <-ch:
-			if !ok {
-				return
+// Execute the scheduling loop in a synchronous blocking mode.
+//
+// if Pool.Data channel is non-nil, synchronous mode is active
+//
+// synchronous mode does **not** mean that the send/receive
+// process is executed in a single goroutine.
+//
+// synchronous mode is a special mode that likely starts more goroutines (seen in pkg/redis/Subscribe)
+// and calling [Pool.Loop] is deemed illegal and causes a panic.
+//
+// On the upside, it does not rely on the ticker to retrieve values.
+// this means that any values sent from a signal propagate as
+// quickly as possible, only being limited by the scheduler.
+//
+// Using this function is also great for benchmarking, as it isnt reliant on the timer.
+func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs map[string]*subscriber.Subscriber[T], sigs map[string]SIGNAL) iter.Seq2[Handler[P, T], error] {
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	var err = r.OnClientInit(ctx, func(ctx context.Context, ps PubSub) error {
+		wg.Done()
+		return nil
+	})
+	if err != nil {
+		return func(yield func(Handler[P, T], error) bool) {
+			yield(Handler[P, T]{}, err)
+		}
+	}
+
+	return func(yield func(Handler[P, T], error) bool) {
+
+		wg.Wait()
+
+		if r.b.Exit != nil {
+			panic(signals.ErrUnsupported.Wrap(
+				"Pool.Loop() can only be called when in the stopped state",
+			))
+		}
+
+		r.b.Exit = make(chan struct{})
+
+		var doneCh = ctx.Done()
+		for {
+			var (
+				handler Handler[P, T]
+				ok      bool
+				err     error
+			)
+
+			if r.b.Data == nil {
+				handler, ok, err = r.RetryCycle(ctx, subs, sigs)
+			} else {
+				handler, ok, err = r.ChanCycle(ctx, doneCh, subs, sigs, false)
 			}
-			callErr(ctx, err)
-		case <-ctx.Done():
-			callErr(ctx, ctx.Err())
+
+			if ok || err != nil {
+				if !yield(handler, err) {
+					break
+				}
+			}
+
+			if !ok {
+				break
+			}
 		}
 	}
 }
 
-func (r *p[P]) processReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(context.Context, error)) {
-	ctx = contextWithPool(ctx, r.b.backref)
-
-	ch := signals.AsyncReceive(ctx, sig, receivers, val)
-	for {
-		select {
-		case err, ok := <-ch:
-			if !ok {
-				return
-			}
-			callErr(ctx, err)
-		case <-ctx.Done():
-			callErr(ctx, ctx.Err())
+func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*subscriber.Subscriber[T], sigs map[string]SIGNAL, resend bool) (Processor, error) {
+	if !r.ClientWasSetup() {
+		_, err := r.b.Client(ctx) // init lazy clients
+		if err != nil {
+			return nil, signals.ErrPool.WithCause(err).Wrap("error during client setup")
 		}
 	}
+
+	var (
+		handler Handler[P, T]
+		ok      bool
+		err     error
+	)
+
+	if r.b.Data == nil {
+		if resend {
+			panic(errors.New("cannot resend data when pool is in asynchronous mode"))
+		}
+
+		handler, ok, err = r.RetryCycle(ctx, subscribers, sigs)
+	} else {
+		handler, ok, err = r.ChanCycle(ctx, ctx.Done(), subscribers, sigs, resend)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if !ok {
+		return nil, ErrPoolClosed
+	}
+
+	return handler, nil
+}
+
+func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*subscriber.Subscriber[T], signals map[string]SIGNAL) (handler Handler[P, T], ok bool, err error) {
+
+	r.Mu.RLock()
+	snapShots := subscriber.Snapshot(subscribers, signals)
+	r.Mu.RUnlock()
+
+	var spin spinner.Spinner
+	for {
+	keyLoop:
+		for _, snapshot := range snapShots {
+
+			// rebuild subscriber cache if required
+			// allows for better concurrency
+			if snapshot.Sub.Dirty.Load() {
+				r.Mu.Lock()
+				snapshot.Sub.Undirtify()
+				r.Mu.Unlock()
+				snapshot.Sub.Dirty.Store(false)
+			}
+
+			// see if we should exit the loop
+			if r.b.Closed.Load() {
+				return handler, false, errors.New("pool is closed (r.Closed == true)")
+			}
+
+			if err := ctx.Err(); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return handler, false, nil
+				}
+
+				return handler, false, err
+			}
+
+			// try to receive the data
+			payload, hasMessage := snapshot.Sub.Pubsub.TryReceive()
+			if !hasMessage {
+				continue keyLoop // Queue empty, move to next subscriber
+			}
+
+			msg, val, err := r.decodeMessage[T](ctx, snapshot.Sig.MsgType(), payload)
+			if err != nil {
+				return handler, true, err
+			}
+
+			handler.Value = val
+			handler.Signal = snapshot.Sig
+			handler.Receivers = snapshot.Sub.Cached
+			handler.Message = msg
+			handler.BasePool = r.b
+
+			return handler, true, nil
+		}
+
+		spin.Spin()
+	}
+}
+
+func (r *p[P]) ChanCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, subscribers map[string]*subscriber.Subscriber[T], signals map[string]SIGNAL, resend bool) (h Handler[P, T], ok bool, err error) {
+	var payload Message
+	select {
+	case payload, ok = <-r.b.Data:
+		if !ok {
+			return
+		}
+
+	case <-r.b.Exit:
+		return h, false, nil
+
+	case <-doneCh:
+		err = ctx.Err()
+		if !errors.Is(err, context.Canceled) {
+			return h, false, err
+		}
+		return h, false, nil
+	}
+
+	if resend {
+		r.b.Data <- payload
+	}
+
+	if payload.Error != nil {
+		return h, true, err
+	}
+
+	// retrieve subscriber object and signal
+	r.Mu.RLock()
+	sub, ok := subscribers[payload.Channel]
+	if !ok {
+		r.Mu.RUnlock()
+		return h, true, nil
+	}
+
+	if sub.Pubsub == nil {
+		r.Mu.RUnlock()
+
+		panic(fmt.Sprintf(
+			"subscriber client is nil but data is being received for channel %s",
+			payload.Channel,
+		))
+	}
+
+	sig, ok := signals[payload.Channel]
+	if !ok {
+		r.Mu.RUnlock()
+		return h, true, nil
+	}
+
+	r.Mu.RUnlock()
+
+	// rebuild subscriber cache if required
+	// allows for better concurrency
+	if sub.Dirty.Load() {
+		r.Mu.Lock()
+		sub.Undirtify()
+		r.Mu.Unlock()
+		sub.Dirty.Store(false)
+	}
+
+	// decode value to send to receivers
+	message, val, err := r.decodeMessage[T](ctx, sig.MsgType(), payload.Data)
+	if err != nil {
+		return h, true, err
+	}
+
+	// process
+	handler := NewHandler[P, T](r.b)
+	handler.Value = val
+	handler.Signal = sig
+	handler.Receivers = sub.Cached
+	handler.Message = message
+	return handler, true, nil
 }

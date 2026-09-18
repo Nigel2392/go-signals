@@ -133,7 +133,7 @@ func TestPoolWaitLoop(t *testing.T) {
 			t.Errorf("WaitLoop error: %v", err)
 		}
 
-		if err := handler.Process(t.Context()); err != nil {
+		if err, _ := <-handler.Process(t.Context()); err != nil {
 			t.Errorf("Process error: %v", err)
 		}
 
@@ -255,7 +255,7 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 
 	// Manually inject subscriber into pool
 	pool.P.Mu.Lock()
-	q := omap.NewOrderedMap[signals.Receiver[string]](0, signals.Receiver[string].ID)
+	q := omap.NewOrderedMap(0, signals.Receiver[string].ID)
 	q.Set(&receiver[string]{id: "dummy"})
 
 	pool.subscribers["test_topic"] = &subscriber.Subscriber[string]{

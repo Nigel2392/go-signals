@@ -49,7 +49,7 @@ func TestTPoolWaitLoop(t *testing.T) {
 			t.Errorf("WaitLoop error: %v", err)
 		}
 
-		if err := handler.Process(t.Context()); err != nil {
+		if err, _ := <-handler.Process(t.Context()); err != nil {
 			t.Errorf("Process error: %v", err)
 		}
 
@@ -114,7 +114,9 @@ func BenchmarkSignalsTPool(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			h.Process(b.Context())
+			for err := range h.Process(b.Context()) {
+				b.Errorf("error during benchmark: %v", err)
+			}
 			wg.Done()
 		}
 	}()

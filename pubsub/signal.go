@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"reflect"
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/google/uuid"
@@ -15,7 +16,9 @@ type signal[T any] struct {
 func (s *signal[T]) Name() string {
 	return s.name
 }
-
+func (s *signal[T]) MsgType() reflect.Type {
+	return s.pool.typ
+}
 func (s *signal[T]) Send(ctx context.Context, v T) error {
 	return s.pool.Send(ctx, s.name, v)
 }

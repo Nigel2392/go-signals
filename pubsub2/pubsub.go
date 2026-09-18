@@ -7,11 +7,6 @@ import (
 	"github.com/Nigel2392/go-signals"
 )
 
-type PoolSignal interface {
-	MsgType() reflect.Type
-	signals.Signal[any]
-}
-
 type unwrapper[T any] interface {
 	Unwrap() T
 }

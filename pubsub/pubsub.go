@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log"
+	"reflect"
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
@@ -18,8 +19,13 @@ type Encoder = encoder.Encoder
 
 var ErrPoolClosed = signals.ErrPool.Wrap("pool is closed")
 
+type PoolSignal[T any] interface {
+	MsgType() reflect.Type
+	signals.Signal[T]
+}
+
 type Processor interface {
-	Process(context.Context) error
+	Process(context.Context) <-chan error
 }
 
 type AbstractPool interface {
@@ -140,7 +146,15 @@ type waitPool[HANDLER Processor] interface {
 }
 
 func GoLoop[POOLTYPE waitPool[HANDLER], HANDLER Processor](ctx context.Context, pool POOLTYPE, chanSize int, autoDrain ...bool) <-chan error {
-	var errCh = make(chan error, chanSize)
+
+	var drain bool
+	var errCh chan error
+	if len(autoDrain) > 0 && autoDrain[0] {
+		drain = autoDrain[0]
+	} else {
+		errCh = make(chan error, chanSize)
+	}
+
 	go func() {
 		var ct = new(0)
 
@@ -166,9 +180,12 @@ func GoLoop[POOLTYPE waitPool[HANDLER], HANDLER Processor](ctx context.Context, 
 				continue
 			}
 
-			err = h.Process(ctx)
-			if err != nil {
-				errCh <- err
+			for err := range h.Process(ctx) {
+				if drain {
+					log.Printf("error during receiver processing: %v", err)
+				} else {
+					errCh <- err
+				}
 			}
 
 			*ct++

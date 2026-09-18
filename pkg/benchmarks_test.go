@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"iter"
-	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,6 +30,13 @@ func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc fun
 	}
 }
 
+func drain(b testing.TB, c <-chan error) {
+	b.Helper()
+	for err := range c {
+		b.Errorf("error from error channel: %v", err)
+	}
+}
+
 type _pool interface {
 	pkgName() string
 	newPool(b testing.TB, client any, opts ...pubsub.PoolOption) pubsub.AbstractPool
@@ -39,9 +45,8 @@ type _pool interface {
 	closePool(b testing.TB, poolVal pubsub.AbstractPool)
 }
 
-type abstractPool[T pubsub.ConfigErrPool[T]] interface {
+type abstractPool[T pubsub.AbstractPool] interface {
 	pubsub.AbstractPool
-	pubsub.ConfigErrPool[T]
 }
 
 type pool[T abstractPool[T]] struct {
@@ -61,10 +66,7 @@ func (p pool[T]) waitLoop(b testing.TB, wg *sync.WaitGroup, poolVal pubsub.Abstr
 }
 
 func (p pool[T]) newPool(b testing.TB, client any, opts ...pubsub.PoolOption) pubsub.AbstractPool {
-	return p._new(b, client, append(opts, pubsub.PoolOnError(func(ctx context.Context, p T, err error) {
-		b.Log(string(debug.Stack()))
-		b.Error(err)
-	}))...)
+	return p._new(b, client, opts...)
 }
 
 func (p pool[T]) newSignal(b testing.TB, name string, poolVal pubsub.AbstractPool) signals.Signal[string] {
@@ -122,7 +124,7 @@ var pools = []_pool{
 					return
 				}
 
-				h.Process(b.Context())
+				drain(b, h.Process(b.Context()))
 				wg.Done()
 			}
 		},
@@ -148,7 +150,7 @@ var pools = []_pool{
 					b.Error(err)
 					return
 				}
-				h.Process(b.Context())
+				drain(b, h.Process(b.Context()))
 				wg.Done()
 			}
 		},
@@ -174,7 +176,7 @@ var pools = []_pool{
 					b.Error(err)
 					return
 				}
-				h.Process(b.Context())
+				drain(b, h.Process(b.Context()))
 				wg.Done()
 			}
 		},
@@ -295,8 +297,7 @@ func BenchmarkPkg(b *testing.B) {
 							continue
 						}
 
-						err = h.Process(b.Context())
-						if err != nil {
+						for err = range h.Process(b.Context()) {
 							b.Error(err)
 						}
 					}
@@ -343,8 +344,7 @@ func BenchmarkPkg(b *testing.B) {
 							continue
 						}
 
-						err = h.Process(b.Context())
-						if err != nil {
+						for err = range h.Process(b.Context()) {
 							b.Error(err)
 						}
 					}
@@ -532,7 +532,7 @@ func TestPkg(t *testing.T) {
 				if err != nil {
 					t.Fatalf("error during cycle: %v", err)
 				}
-				if err := h.Process(t.Context()); err != nil {
+				if err, _ := <-h.Process(t.Context()); err != nil {
 					t.Fatalf("error during process: %v", err)
 				}
 
@@ -540,7 +540,7 @@ func TestPkg(t *testing.T) {
 				if err != nil {
 					t.Fatalf("error during cycle: %v", err)
 				}
-				if err := h.Process(t.Context()); err != nil {
+				if err, _ := <-h.Process(t.Context()); err != nil {
 					t.Fatalf("error during process: %v", err)
 				}
 
