@@ -478,10 +478,30 @@ func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribe
 	return handler, nil
 }
 
+type subSnapshot[VAL any, SIG PoolSignal[VAL]] struct {
+	topic string
+	sig   SIG
+	sub   *Sub[VAL]
+}
+
 func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], signals map[string]SIGNAL) (handler Handler[P, T], ok bool, err error) {
 
 	r.Mu.RLock()
-	snapShots := snapshot(subscribers, signals)
+
+	snapShots := make([]subSnapshot[T, SIGNAL], 0, len(subscribers))
+	for k, sub := range subscribers {
+		sig, ok := signals[k]
+		if !ok {
+			continue
+		}
+
+		snapShots = append(snapShots, subSnapshot[T, SIGNAL]{
+			topic: k,
+			sig:   sig,
+			sub:   sub,
+		})
+	}
+
 	r.Mu.RUnlock()
 
 	var spin spinner.Spinner
@@ -491,11 +511,11 @@ func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs
 
 			// rebuild subscriber cache if required
 			// allows for better concurrency
-			if snapshot.Sub.dirty.Load() {
+			if snapshot.sub.dirty.Load() {
 				r.Mu.Lock()
-				snapshot.Sub.undirtify()
+				snapshot.sub.undirtify()
 				r.Mu.Unlock()
-				snapshot.Sub.dirty.Store(false)
+				snapshot.sub.dirty.Store(false)
 			}
 
 			// see if we should exit the loop
@@ -512,19 +532,19 @@ func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs
 			}
 
 			// try to receive the data
-			payload, hasMessage := snapshot.Sub.Pubsub.TryReceive()
+			payload, hasMessage := snapshot.sub.Pubsub.TryReceive()
 			if !hasMessage {
 				continue keyLoop // Queue empty, move to next subscriber
 			}
 
-			msg, val, err := r.decodeMessage[T](ctx, snapshot.Sig.MsgType(), payload)
+			msg, val, err := r.decodeMessage[T](ctx, snapshot.sig.MsgType(), payload)
 			if err != nil {
 				return handler, true, err
 			}
 
 			handler.Value = val
-			handler.Signal = snapshot.Sig
-			handler.Receivers = snapshot.Sub.cached
+			handler.Signal = snapshot.sig
+			handler.Receivers = snapshot.sub.cached
 			handler.Message = msg
 			handler.BasePool = r.b
 

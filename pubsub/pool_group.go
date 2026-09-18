@@ -8,29 +8,6 @@ import (
 	"github.com/Nigel2392/go-signals/internal/omap"
 )
 
-type subSnapshot[VAL any, SIG PoolSignal[VAL]] struct {
-	Topic string
-	Sig   SIG
-	Sub   *Sub[VAL]
-}
-
-func snapshot[VAL any, SIG PoolSignal[VAL]](s map[string]*Sub[VAL], sigs map[string]SIG) []subSnapshot[VAL, SIG] {
-	snapShots := make([]subSnapshot[VAL, SIG], 0, len(s))
-	for k, sub := range s {
-		sig, ok := sigs[k]
-		if !ok {
-			continue
-		}
-
-		snapShots = append(snapShots, subSnapshot[VAL, SIG]{
-			Topic: k,
-			Sig:   sig,
-			Sub:   sub,
-		})
-	}
-	return snapShots
-}
-
 type Sub[T any] struct {
 	Pubsub    Subscriber
 	Receivers *omap.OrderedMap[signals.Receiver[T]]

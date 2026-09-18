@@ -302,12 +302,16 @@ func TestGlobalGNestedSignals_CrossTrigger(t *testing.T) {
 }
 
 var (
+	_ Signal[any]                  = testNoProvider[any]{}
 	_ ReceiverProvider[any]        = testReceiverProvider[any]{}
 	_ ReceiverIterProvider[any]    = testReceiverIterProvider[any]{}
 	_ ReceiverIterLenProvider[any] = testReceiverIterLenProvider[any]{}
 )
 
 type (
+	testNoProvider[T any] struct {
+		Signal[T]
+	}
 	testReceiverProvider[T any] struct {
 		*signal[T]
 	}
@@ -394,6 +398,7 @@ func BenchmarkAsyncSignalTypes(b *testing.B) {
 	var benchmarks = make([]benchmark, 0, len(tests)*3)
 	for _, test := range tests {
 		benchmarks = append(benchmarks,
+			benchmark{test, testNoProvider[*string]{test.signal}},
 			benchmark{test, testReceiverProvider[*string]{test.signal}},
 			benchmark{test, testReceiverIterProvider[*string]{test.signal}},
 			benchmark{test, testReceiverIterLenProvider[*string]{test.signal}},
