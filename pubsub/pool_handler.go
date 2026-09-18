@@ -67,13 +67,13 @@ func (r Handler[P, T]) Process(ctx context.Context) error {
 
 	ctx = ContextWithMessage(ctx, r.Message)
 	if r.ReceiversIter.Receivers != nil {
-		r.BasePool.processReceiversIter(ctx, r.Signal, r.ReceiversIter.Len, r.ReceiversIter.Receivers, r.Value, func(_ context.Context, err error) {
+		r.BasePool.P.processReceiversIter(ctx, r.Signal, r.ReceiversIter.Len, r.ReceiversIter.Receivers, r.Value, func(_ context.Context, err error) {
 			mu.Lock()
 			errs = append(errs, err)
 			mu.Unlock()
 		})
 	} else {
-		r.BasePool.processReceivers(ctx, r.Signal, r.Receivers, r.Value, func(_ context.Context, err error) {
+		r.BasePool.P.processReceivers(ctx, r.Signal, r.Receivers, r.Value, func(_ context.Context, err error) {
 			mu.Lock()
 			errs = append(errs, err)
 			mu.Unlock()

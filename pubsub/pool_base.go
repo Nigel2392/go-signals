@@ -5,9 +5,9 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"reflect"
 	"sync"
 	"sync/atomic"
-	"time"
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
@@ -40,10 +40,10 @@ const (
 //		return c >= recusionContext(depth)
 //	}
 
-type ProcessorBasePool[P ChannelBinder] BasePool[P]
-
-func (p *ProcessorBasePool[P]) ProcessReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(context.Context, error)) {
-	(*BasePool[P])(p).processReceivers(ctx, sig, receivers, val, callErr)
+type minimumPool interface {
+	ID() uuid.UUID
+	Close()
+	ChannelBinder
 }
 
 type clientSetup struct {
@@ -60,10 +60,16 @@ type clientSetup struct {
 	onClientInit []func(context.Context, PubSub) error
 }
 
-type BasePool[POOLTYPE any] struct {
+// internal struct to separate out methods from the basepool so
+// they dont automatically become available when [BasePool] gets embedded in a [Pool]
+type p[POOLTYPE any] struct {
+	b  *BasePool[POOLTYPE]
 	cs clientSetup
-
 	Mu *sync.RWMutex
+}
+
+type BasePool[POOLTYPE any] struct {
+	P p[POOLTYPE]
 
 	// inst provides the instance ID for this pool object.
 	//
@@ -91,9 +97,6 @@ type BasePool[POOLTYPE any] struct {
 	// quickly as possible, only being limited by the scheduler.
 	Data chan Message
 
-	// managing the loop
-	TickTime time.Duration // only used when in async/loop mode
-
 	// fast-path to check if currently in non-running state
 	// selecting on `exit` makes the `Pool` slower by *orders of magnitude.*
 	Closed atomic.Bool
@@ -102,32 +105,24 @@ type BasePool[POOLTYPE any] struct {
 	backref POOLTYPE
 }
 
-type minimumPool interface {
-	ID() uuid.UUID
-	Close()
-	ChannelBinder
-}
-
 func NewBasePool[POOLTYPE minimumPool](clientCtx context.Context, pubsub any) *BasePool[POOLTYPE] {
-	pool := &BasePool[POOLTYPE]{
-		Mu: &sync.RWMutex{},
-	}
+	pool := &BasePool[POOLTYPE]{}
 
 	switch c := pubsub.(type) {
 	case PubSub:
-		pool.cs.client = c
+		pool.P.cs.client = c
 
 	case func() PubSub:
-		pool.cs._getClient = func(ctx context.Context) PubSub {
+		pool.P.cs._getClient = func(ctx context.Context) PubSub {
 			return c()
 		}
 	case func(context.Context) PubSub:
-		pool.cs._getClient = func(ctx context.Context) PubSub {
+		pool.P.cs._getClient = func(ctx context.Context) PubSub {
 			return c(ctx)
 		}
 
 	case func(context.Context, ChannelBinder) PubSub:
-		pool.cs._getClient = func(ctx context.Context) PubSub {
+		pool.P.cs._getClient = func(ctx context.Context) PubSub {
 			return c(ctx, pool.backref)
 		}
 
@@ -135,31 +130,10 @@ func NewBasePool[POOLTYPE minimumPool](clientCtx context.Context, pubsub any) *B
 		panic(fmt.Sprintf("unknown client type: %T", pubsub))
 	}
 
+	pool.P.b = pool
+	pool.P.Mu = &sync.RWMutex{}
+
 	return pool
-}
-
-func (r *BasePool[P]) ClientWasSetup() bool {
-	return r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup
-}
-
-func (r *BasePool[P]) OnClientInit(ctx context.Context, fn func(context.Context, PubSub) error) error {
-
-	// fast path check
-	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
-		return fn(ctx, r.cs.client)
-	}
-
-	r.cs.cmu.Lock()
-
-	// slow path check
-	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
-		r.cs.cmu.Unlock()
-		return fn(ctx, r.cs.client)
-	}
-
-	r.cs.onClientInit = append(r.cs.onClientInit, fn)
-	r.cs.cmu.Unlock()
-	return nil
 }
 
 func (r *BasePool[P]) WithAutoInitClient(b bool) {
@@ -174,16 +148,12 @@ func (r *BasePool[P]) Initialize(ctx context.Context) error {
 		r.Encoder = encoder.NewJSONEncoder()
 	}
 
-	if r.TickTime == 0 {
-		r.TickTime = time.Millisecond / 2
-	}
-
 	if (r.Inst == uuid.UUID{}) {
 		r.Inst = uuid.New()
 	}
 
-	if r.cs.client != nil || r.cs.flags.Load()&bpf_autoInit == bpf_autoInit {
-		return r.setupClient(ctx)
+	if r.P.cs.client != nil || r.P.cs.flags.Load()&bpf_autoInit == bpf_autoInit {
+		return r.P.setupClient(ctx)
 	}
 
 	return nil
@@ -194,15 +164,15 @@ func (r *BasePool[P]) ID() uuid.UUID {
 }
 
 func (r *BasePool[P]) MustClient(ctx context.Context) PubSub {
-	if err := r.setupClient(ctx); err != nil {
+	if err := r.P.setupClient(ctx); err != nil {
 		panic(fmt.Errorf("error initialising client: %w", err))
 	}
-	return r.cs.client
+	return r.P.cs.client
 }
 
 func (r *BasePool[P]) Client(ctx context.Context) (PubSub, error) {
-	err := r.setupClient(ctx)
-	return r.cs.client, err
+	err := r.P.setupClient(ctx)
+	return r.P.cs.client, err
 }
 
 func (r *BasePool[P]) SetChannel(ctx context.Context, ch chan Message) {
@@ -221,13 +191,9 @@ func (p *BasePool[P]) WithEncoder(enc encoder.Encoder) {
 	p.Encoder = enc
 }
 
-func (p *BasePool[P]) WithTickDuration(t time.Duration) {
-	p.TickTime = t
-}
-
 func (r *BasePool[P]) Close() {
-	r.Mu.RLock()
-	defer r.Mu.RUnlock()
+	r.P.Mu.RLock()
+	defer r.P.Mu.RUnlock()
 
 	if r.Data != nil {
 		close(r.Data)
@@ -240,7 +206,7 @@ func (r *BasePool[P]) Close() {
 }
 
 func (r *BasePool[P]) Send[T any](ctx context.Context, topic string, value T) error {
-	message, err := r.newMessage(ctx, topic, value)
+	message, err := r.P.newMessage(ctx, topic, value)
 	if err != nil {
 		return signals.ErrSignal.WithCause(err).Wrapf(
 			"could not encode %T with %T", value, r.Encoder,
@@ -271,10 +237,10 @@ func (r *BasePool[P]) Send[T any](ctx context.Context, topic string, value T) er
 	return nil
 }
 
-func (r *BasePool[P]) newMessage[T any](ctx context.Context, topic string, value T) (message *Message, err error) {
+func (r *p[P]) newMessage[T any](ctx context.Context, topic string, value T) (message *Message, err error) {
 	var data []byte
 	if any(value) != nil {
-		data, err = r.Encoder.EncodeBytes(value)
+		data, err = r.b.Encoder.EncodeBytes(value)
 		if err != nil {
 			return nil, err
 		}
@@ -282,16 +248,16 @@ func (r *BasePool[P]) newMessage[T any](ctx context.Context, topic string, value
 
 	message = new(Message{
 		Channel: topic,
-		Sender:  r.Inst,
+		Sender:  r.b.Inst,
 		Data:    data,
-		Meta:    MsgMetaFromContext(ctx, r.backref),
+		Meta:    MsgMetaFromContext(ctx, r.b.backref),
 	})
 
 	if message.Meta == nil {
 		message.Meta = make(map[string]any)
 	}
 
-	c, err := r.Client(ctx)
+	c, err := r.b.Client(ctx)
 	if err != nil {
 		return message, err
 	}
@@ -303,23 +269,47 @@ func (r *BasePool[P]) newMessage[T any](ctx context.Context, topic string, value
 	return message, nil
 }
 
-func (r *BasePool[P]) decodeMessage[T any](_ context.Context, data []byte) (msg *Message, sentVal T, err error) {
+func (r *p[P]) DecodeMessage[T any](_ context.Context, typ reflect.Type, data []byte) (msg *Message, sentVal T, err error) {
 	payload := new(Message)
-	err = r.Encoder.Decode(bytes.NewReader(data), payload)
+	err = r.b.Encoder.Decode(bytes.NewReader(data), payload)
 	if err != nil {
 		return nil, sentVal, err
 	}
 
-	val := new(T)
-	err = r.Encoder.Decode(bytes.NewReader(payload.Data), val)
+	val := reflect.New(typ)
+	err = r.b.Encoder.Decode(bytes.NewReader(payload.Data), val.Interface())
 	if err != nil {
 		return payload, sentVal, err
 	}
 
-	return payload, *val, err
+	return payload, val.Elem().Interface().(T), err
 }
 
-func (r *BasePool[P]) setupClient(ctx context.Context) error {
+func (r *p[P]) ClientWasSetup() bool {
+	return r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup
+}
+
+func (r *p[P]) OnClientInit(ctx context.Context, fn func(context.Context, PubSub) error) error {
+
+	// fast path check
+	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
+		return fn(ctx, r.cs.client)
+	}
+
+	r.cs.cmu.Lock()
+
+	// slow path check
+	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
+		r.cs.cmu.Unlock()
+		return fn(ctx, r.cs.client)
+	}
+
+	r.cs.onClientInit = append(r.cs.onClientInit, fn)
+	r.cs.cmu.Unlock()
+	return nil
+}
+
+func (r *p[P]) setupClient(ctx context.Context) error {
 	if r.cs.flags.Load()&bpf_wasSetup == bpf_wasSetup {
 		return nil
 	}
@@ -350,7 +340,7 @@ func (r *BasePool[P]) setupClient(ctx context.Context) error {
 		}
 
 		if b, ok := r.cs.client.(PubSubBinder); ok {
-			b.BindChannel(ctx, r)
+			b.BindChannel(ctx, r.b)
 		}
 
 		r.cs.flags.Or(bpf_clientBound)
@@ -367,8 +357,8 @@ func (r *BasePool[P]) setupClient(ctx context.Context) error {
 	return nil
 }
 
-func (r *BasePool[P]) processReceiversIter[T any](ctx context.Context, sig signals.Signal[T], recvLen int, receivers iter.Seq[signals.Receiver[T]], val T, callErr func(context.Context, error)) {
-	ctx = contextWithPool(ctx, r.backref)
+func (r *p[P]) processReceiversIter[T any](ctx context.Context, sig signals.Signal[T], recvLen int, receivers iter.Seq[signals.Receiver[T]], val T, callErr func(context.Context, error)) {
+	ctx = contextWithPool(ctx, r.b.backref)
 	ch := signals.AsyncReceiveIter(ctx, sig, recvLen, receivers, val)
 	for {
 		select {
@@ -383,8 +373,8 @@ func (r *BasePool[P]) processReceiversIter[T any](ctx context.Context, sig signa
 	}
 }
 
-func (r *BasePool[P]) processReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(context.Context, error)) {
-	ctx = contextWithPool(ctx, r.backref)
+func (r *p[P]) processReceivers[T any](ctx context.Context, sig signals.Signal[T], receivers []signals.Receiver[T], val T, callErr func(context.Context, error)) {
+	ctx = contextWithPool(ctx, r.b.backref)
 
 	ch := signals.AsyncReceive(ctx, sig, receivers, val)
 	for {

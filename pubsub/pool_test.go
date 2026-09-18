@@ -20,7 +20,7 @@ func TestPoolInternalState(t *testing.T) {
 
 	// Initial State Validation
 	t.Run("InitialState", func(t *testing.T) {
-		if pool.cs.client != client {
+		if pool.P.cs.client != client {
 			t.Errorf("expected client to be set")
 		}
 		if pool.signals == nil || len(pool.signals) != 0 {
@@ -44,9 +44,9 @@ func TestPoolInternalState(t *testing.T) {
 			t.Errorf("expected signal name test_topic")
 		}
 
-		pool.Mu.RLock()
+		pool.P.Mu.RLock()
 		internalSig, ok := pool.signals["test_topic"]
-		pool.Mu.RUnlock()
+		pool.P.Mu.RUnlock()
 
 		if !ok || internalSig != sig {
 			t.Errorf("expected signal to be stored in pool signals map")
@@ -64,9 +64,9 @@ func TestPoolInternalState(t *testing.T) {
 			t.Fatalf("Listen error: %v", err)
 		}
 
-		pool.Mu.RLock()
+		pool.P.Mu.RLock()
 		sub, ok := pool.subscribers["test_topic"]
-		pool.Mu.RUnlock()
+		pool.P.Mu.RUnlock()
 
 		if !ok || sub == nil {
 			t.Fatalf("expected subscriber to be created")
@@ -161,7 +161,7 @@ func TestPoolWaitLoop(t *testing.T) {
 func TestPoolLoop(t *testing.T) {
 	client := NewMockPubSub(true)
 	ctx, cancel := context.WithCancel(context.Background())
-	pool := GoNew[string](ctx, client, PoolTickTime(10*time.Millisecond))
+	pool := GoNew[string](ctx, client)
 
 	sig := pool.NewSignal(context.Background(), "test_topic")
 
@@ -205,9 +205,9 @@ func TestPool_SubscriberCache(t *testing.T) {
 		return nil
 	})
 
-	pool.Mu.RLock()
+	pool.P.Mu.RLock()
 	sub := pool.subscribers["test_topic"]
-	pool.Mu.RUnlock()
+	pool.P.Mu.RUnlock()
 
 	// Initial dirty flag should be true after add
 	if !sub.Dirty.Load() {
@@ -254,7 +254,7 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	mockSub.push([]byte("{ invalid json }"), "test_topic")
 
 	// Manually inject subscriber into pool
-	pool.Mu.Lock()
+	pool.P.Mu.Lock()
 	q := omap.NewOrderedMap[signals.Receiver[string]](0, signals.Receiver[string].ID)
 	q.Set(&receiver[string]{id: "dummy"})
 
@@ -262,7 +262,7 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 		Pubsub:    mockSub,
 		Receivers: q,
 	}
-	pool.Mu.Unlock()
+	pool.P.Mu.Unlock()
 
 	// Cycle will pop from TryReceive, try to decode, and fail
 	// calling the Process method on the handler is not required in this case,

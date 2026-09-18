@@ -2,7 +2,6 @@ package pubsub
 
 import (
 	"context"
-	"time"
 	"uuid"
 
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
@@ -10,7 +9,6 @@ import (
 
 type ConfigPool interface {
 	WithEncoder(encoder.Encoder)
-	WithTickDuration(time.Duration)
 	WithInstanceID(uuid.UUID)
 	WithAutoInitClient(bool)
 }
@@ -31,12 +29,6 @@ func PoolOnError[POOLTYPE ConfigErrPool[POOLTYPE]](fn func(context.Context, POOL
 	return func(p ConfigPool) {
 		errSet := p.(POOLTYPE)
 		errSet.WithOnError(fn)
-	}
-}
-
-func PoolTickTime(tickTime time.Duration) PoolOption {
-	return func(p ConfigPool) {
-		p.WithTickDuration(tickTime)
 	}
 }
 

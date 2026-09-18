@@ -363,7 +363,6 @@ func TestPoolSend(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime(time.Millisecond*10),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
@@ -485,7 +484,6 @@ func TestMultiplePoolsSend(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime(time.Millisecond),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
@@ -534,7 +532,6 @@ func TestMultiplePoolsSend(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		// pubsub.PoolClientInit(true),
-		pubsub.PoolTickTime(time.Millisecond),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
@@ -621,7 +618,6 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolClientInit(true),
-		pubsub.PoolTickTime(time.Millisecond),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			errCh <- err
 		}),
@@ -670,7 +666,6 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolClientInit(true),
-		pubsub.PoolTickTime(time.Millisecond),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			errCh <- err
 		}),
@@ -757,7 +752,6 @@ func TestPoolContextErr(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime(time.Millisecond*10),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
@@ -829,7 +823,6 @@ func TestNestedSignals_CrossTrigger(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime(time.Millisecond*10),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
@@ -898,7 +891,6 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolClientInit(true),
-		pubsub.PoolTickTime(time.Microsecond*200), // 0.2ms
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),
@@ -968,7 +960,6 @@ func TestSendAsync(t *testing.T) {
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
-		pubsub.PoolTickTime(time.Millisecond*10),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),

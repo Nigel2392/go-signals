@@ -14,10 +14,10 @@ const (
 )
 
 var (
-	ErrPool        = new(errors.New(CodePoolError, "pool error"))
-	ErrSignal      = new(errors.New(CodeSignalError, "signal error"))
-	ErrReceiver    = new(errors.New(CodeReceiverError, "receiver error"))
-	ErrUnsupported = new(errors.New(CodeNotSupported, "operation not supported"))
+	ErrPool        = errors.New(CodePoolError, "pool error")
+	ErrSignal      = errors.New(CodeSignalError, "signal error")
+	ErrReceiver    = errors.New(CodeReceiverError, "receiver error")
+	ErrUnsupported = errors.New(CodeNotSupported, "operation not supported")
 )
 
 func SignalError(e error) (Error, bool) {

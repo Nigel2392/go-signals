@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log"
+	"reflect"
 	"sync"
 
 	"github.com/Nigel2392/go-signals"
@@ -65,7 +66,7 @@ func New[T any](clientCtx context.Context, pubsub any, opts ...PoolOption) *Pool
 
 func GoNew[T any](ctx context.Context, pubsub any, opts ...PoolOption) *Pool[T] {
 	pool := New[T](ctx, pubsub, opts...)
-	err := pool.BasePool.OnClientInit(ctx, pool.goNew)
+	err := pool.BasePool.P.OnClientInit(ctx, pool.goNew)
 	if err != nil {
 		panic(err)
 	}
@@ -91,8 +92,8 @@ func (r *Pool[T]) Send(ctx context.Context, topic string, value T) error {
 }
 
 func (r *Pool[T]) NewSignal(_ context.Context, name string) signals.Signal[T] {
-	r.Mu.Lock()
-	defer r.Mu.Unlock()
+	r.P.Mu.Lock()
+	defer r.P.Mu.Unlock()
 	sig, ok := r.signals[name]
 	if !ok {
 		// slower, but ok.
@@ -128,7 +129,7 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[*Pool[T], T], 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
-	var err = r.BasePool.OnClientInit(ctx, func(ctx context.Context, ps PubSub) error {
+	var err = r.BasePool.P.OnClientInit(ctx, func(ctx context.Context, ps PubSub) error {
 		wg.Done()
 		return nil
 	})
@@ -176,7 +177,7 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[*Pool[T], T], 
 }
 
 func (r *Pool[T]) Cycle(ctx context.Context, resend bool) (Processor, error) {
-	if !r.BasePool.ClientWasSetup() {
+	if !r.BasePool.P.ClientWasSetup() {
 		_, err := r.BasePool.Client(ctx) // init lazy clients
 		if err != nil {
 			return nil, signals.ErrPool.WithCause(err).Wrap("error during client setup")
@@ -210,31 +211,11 @@ func (r *Pool[T]) Cycle(ctx context.Context, resend bool) (Processor, error) {
 	return handler, nil
 }
 
-type tryCycleSnapshot[T any] struct {
-	name       string
-	sig        *signal[T]
-	subscriber *subscriber.Subscriber[T]
-}
-
 func (r *Pool[T]) tryCycle(ctx context.Context) (handler Handler[*Pool[T], T], ok bool, err error) {
 
-	r.Mu.RLock()
-
-	snapShots := make([]tryCycleSnapshot[T], 0, len(r.subscribers))
-	for k, sub := range r.subscribers {
-		sig, ok := r.signals[k]
-		if !ok {
-			continue
-		}
-
-		snapShots = append(snapShots, tryCycleSnapshot[T]{
-			name:       k,
-			sig:        sig,
-			subscriber: sub,
-		})
-	}
-
-	r.Mu.RUnlock()
+	r.P.Mu.RLock()
+	snapShots := subscriber.Snapshot(r.subscribers, r.signals)
+	r.P.Mu.RUnlock()
 
 	var spin spinner.Spinner
 	for {
@@ -243,11 +224,11 @@ func (r *Pool[T]) tryCycle(ctx context.Context) (handler Handler[*Pool[T], T], o
 
 			// rebuild subscriber cache if required
 			// allows for better concurrency
-			if snapshot.subscriber.Dirty.Load() {
-				r.Mu.Lock()
-				snapshot.subscriber.Undirtify()
-				r.Mu.Unlock()
-				snapshot.subscriber.Dirty.Store(false)
+			if snapshot.Sub.Dirty.Load() {
+				r.P.Mu.Lock()
+				snapshot.Sub.Undirtify()
+				r.P.Mu.Unlock()
+				snapshot.Sub.Dirty.Store(false)
 			}
 
 			// see if we should exit the loop
@@ -264,19 +245,19 @@ func (r *Pool[T]) tryCycle(ctx context.Context) (handler Handler[*Pool[T], T], o
 			}
 
 			// try to receive the data
-			payload, hasMessage := snapshot.subscriber.Pubsub.TryReceive()
+			payload, hasMessage := snapshot.Sub.Pubsub.TryReceive()
 			if !hasMessage {
 				continue keyLoop // Queue empty, move to next subscriber
 			}
 
-			msg, val, err := r.decodeMessage[T](ctx, payload)
+			msg, val, err := r.P.DecodeMessage[T](ctx, reflect.TypeFor[T](), payload)
 			if err != nil {
 				return handler, true, err
 			}
 
 			handler.Value = val
-			handler.Signal = snapshot.sig
-			handler.Receivers = snapshot.subscriber.Cached
+			handler.Signal = snapshot.Sig
+			handler.Receivers = snapshot.Sub.Cached
 			handler.Message = msg
 			handler.BasePool = r.BasePool
 
@@ -315,15 +296,15 @@ func (r *Pool[T]) cycle(ctx context.Context, doneCh <-chan struct{}, resend bool
 	}
 
 	// retrieve subscriber object and signal
-	r.Mu.RLock()
+	r.P.Mu.RLock()
 	sub, ok := r.subscribers[payload.Channel]
 	if !ok {
-		r.Mu.RUnlock()
+		r.P.Mu.RUnlock()
 		return h, true, nil
 	}
 
 	if sub.Pubsub == nil {
-		r.Mu.RUnlock()
+		r.P.Mu.RUnlock()
 
 		panic(fmt.Sprintf(
 			"subscriber client is nil but data is being received for channel %s",
@@ -333,23 +314,23 @@ func (r *Pool[T]) cycle(ctx context.Context, doneCh <-chan struct{}, resend bool
 
 	sig, ok := r.signals[payload.Channel]
 	if !ok {
-		r.Mu.RUnlock()
+		r.P.Mu.RUnlock()
 		return h, true, nil
 	}
 
-	r.Mu.RUnlock()
+	r.P.Mu.RUnlock()
 
 	// rebuild subscriber cache if required
 	// allows for better concurrency
 	if sub.Dirty.Load() {
-		r.Mu.Lock()
+		r.P.Mu.Lock()
 		sub.Undirtify()
-		r.Mu.Unlock()
+		r.P.Mu.Unlock()
 		sub.Dirty.Store(false)
 	}
 
 	// decode value to send to receivers
-	message, val, err := r.decodeMessage[T](ctx, payload.Data)
+	message, val, err := r.P.DecodeMessage[T](ctx, reflect.TypeFor[T](), payload.Data)
 	if err != nil {
 		return h, true, err
 	}
@@ -385,12 +366,12 @@ func (r *Pool[T]) newSub(signal string, createIfNotExists bool) (*subscriber.Sub
 }
 
 func (r *Pool[T]) connect(ctx context.Context, signal string, recv signals.Receiver[T]) (err error) {
-	r.Mu.Lock()
-	defer r.Mu.Unlock()
+	r.P.Mu.Lock()
+	defer r.P.Mu.Unlock()
 
 	sub, isNew := r.newSub(signal, true)
 	if isNew {
-		err = r.BasePool.OnClientInit(ctx, func(ctx context.Context, c PubSub) error {
+		err = r.BasePool.P.OnClientInit(ctx, func(ctx context.Context, c PubSub) error {
 			sub.Pubsub, err = c.Subscribe(ctx, signal)
 			return err
 		})
@@ -408,8 +389,8 @@ func (r *Pool[T]) clear(ctx context.Context, signal string) error {
 
 	ctx = ContextWith(ctx, "disconnect", signal, r)
 
-	r.Mu.Lock()
-	defer r.Mu.Unlock()
+	r.P.Mu.Lock()
+	defer r.P.Mu.Unlock()
 
 	sub, _ := r.newSub(signal, false)
 	if sub == nil || sub.Receivers == nil || sub.Receivers.Length() == 0 {
@@ -438,8 +419,8 @@ func (r *Pool[T]) disconnect(ctx context.Context, sig *signal[T], recv signals.R
 
 	ctx = ContextWith(ctx, "disconnect", sig.name, r)
 
-	r.Mu.Lock()
-	defer r.Mu.Unlock()
+	r.P.Mu.Lock()
+	defer r.P.Mu.Unlock()
 
 	sub, _ := r.newSub(sig.name, false)
 	if sub == nil || sub.Receivers == nil || sub.Receivers.Length() == 0 {

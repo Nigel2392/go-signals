@@ -249,7 +249,6 @@ func TestPoolSend(t *testing.T) {
 	pool := pubsub.GoNew[MyType](
 		t.Context(),
 		PubSub(true),
-		pubsub.PoolTickTime(time.Millisecond*10),
 		// pubsub.PoolPrefersBlock,
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
@@ -351,7 +350,6 @@ func TestPoolContextErr(t *testing.T) {
 	pool := pubsub.GoNew[MyType](
 		ctx,
 		PubSub(true),
-		pubsub.PoolTickTime(time.Millisecond*10),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[MyType], err error) {
 			errCh <- err
 		}),
@@ -475,7 +473,6 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 		t.Context(),
 		PubSub(true),
 		// pubsub.PoolTickTime(time.Millisecond/5),
-		pubsub.PoolTickTime(time.Millisecond/5),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[string], err error) {
 			errCh <- err
 		}),

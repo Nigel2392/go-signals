@@ -257,9 +257,9 @@ func TestSignalClear(t *testing.T) {
 		t.Errorf("Clear error: %v", err)
 	}
 
-	pool.Mu.RLock()
+	pool.P.Mu.RLock()
 	sub := pool.subscribers["test_topic"]
-	pool.Mu.RUnlock()
+	pool.P.Mu.RUnlock()
 
 	if sub != nil && sub.Receivers.Length() > 0 {
 		t.Errorf("expected 0 receivers after clear, got %d", sub.Receivers.Length())
