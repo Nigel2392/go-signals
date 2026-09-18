@@ -8,7 +8,6 @@ import (
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/internal/omap"
-	"github.com/Nigel2392/go-signals/internal/subscriber"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
@@ -21,14 +20,14 @@ type Pool struct {
 	signals map[string]pubsub.PoolSignal[any]
 
 	// map of topic to subscribers,
-	subscribers map[string]*subscriber.Subscriber[any]
+	subscribers map[string]*pubsub.Sub[any]
 }
 
 func New(clientCtx context.Context, pub any, opts ...pubsub.PoolOption) *Pool {
 	pool := &Pool{
 		BasePool:    pubsub.NewBasePool[*Pool](clientCtx, pub),
 		signals:     make(map[string]pubsub.PoolSignal[any]),
-		subscribers: make(map[string]*subscriber.Subscriber[any]),
+		subscribers: make(map[string]*pubsub.Sub[any]),
 	}
 
 	pool.BasePool.WithReference(pool)
@@ -66,16 +65,6 @@ func (p *Pool) goNew(ctx context.Context, _ pubsub.PubSub) error {
 
 func (p *Pool) TPool[T any]() *TPool[T] {
 	return (*TPool[T])(p)
-}
-
-func (r *Pool) Close() {
-	r.P.Mu.RLock()
-	defer r.P.Mu.RUnlock()
-	if r.Exit != nil {
-		r.Closed.Store(true)
-		close(r.Exit)
-		r.Exit = nil
-	}
 }
 
 func (r *Pool) Get[T any](ctx context.Context, name string) signals.Signal[T] {
@@ -128,7 +117,7 @@ func (r *Pool) Cycle(ctx context.Context, resend bool) (pubsub.Processor, error)
 	return r.P.Cycle(ctx, r.subscribers, r.signals, resend)
 }
 
-func (r *Pool) newSub(signal string, createIfNotExists bool) (*subscriber.Subscriber[any], bool) {
+func (r *Pool) newSub(signal string, createIfNotExists bool) (*pubsub.Sub[any], bool) {
 	s, ok := r.subscribers[signal]
 	if ok {
 		return s, false
@@ -138,7 +127,7 @@ func (r *Pool) newSub(signal string, createIfNotExists bool) (*subscriber.Subscr
 		return nil, false
 	}
 
-	s = &subscriber.Subscriber[any]{
+	s = &pubsub.Sub[any]{
 		Receivers: omap.NewOrderedMap(0, signals.Receiver[any].ID),
 	}
 	r.subscribers[signal] = s

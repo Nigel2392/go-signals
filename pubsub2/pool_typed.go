@@ -47,8 +47,7 @@ func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool
 			}
 
 			// verify type matches desired type
-			sigTyp := handler.Signal.(interface{ MsgType() reflect.Type }).MsgType()
-			if sigTyp != chkTyp {
+			if sigTyp := handler.Signal.MsgType(); sigTyp != chkTyp {
 				panic(fmt.Sprintf("%s does not match required type %s", sigTyp, chkTyp))
 			}
 
@@ -56,18 +55,39 @@ func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool
 			//
 			// pretty sure the below conversion is safe (tests pass)
 			// since the underlying type of [pubsub.BasePool]'s POOLTYPE == *Pool == *TPool
-			newHandler := pubsub.NewHandler[*TPool[T], T]((*pubsub.BasePool[*TPool[T]])(unsafe.Pointer(r.BasePool)))
-			newHandler.Value = handler.Value.(T)
-			newHandler.Message = handler.Message
-			newHandler.Signal = (*signal[T])(handler.Signal.(*wrappedSignal[T]))
+			// newHandler := pubsub.NewHandler[*TPool[T], T]((*pubsub.BasePool[*TPool[T]])(unsafe.Pointer(r.BasePool)))
+			newHandler := pubsub.Handler[*TPool[T], T]{
+				BasePool: (*pubsub.BasePool[*TPool[T]])(unsafe.Pointer(r.BasePool)),
+				Signal:   (*signal[T])(handler.Signal.(*wrappedSignal[T])),
+				Message:  handler.Message,
+				Value:    handler.Value.(T),
+			}
 
 			// set [pubsub.Handler.ReceiversIter] instead of [pubsub.Handler.Receivers]
 			// this saves a lot of b/op and some allocs (deepcopying slices)
 			newHandler.ReceiversIter.Len = len(handler.Receivers)
 			newHandler.ReceiversIter.Receivers = func(yield func(signals.Receiver[T]) bool) {
+			receiverLoop:
 				for _, r := range handler.Receivers {
-					if !yield(TypedReceiver[T](r)) {
-						break
+					switch s := r.(type) {
+					case *ifaceReceiver[T]:
+						if !yield(s.Receiver) {
+							break receiverLoop
+						}
+					case *wrappedReceiver[T]:
+						if !yield((*receiver[T])(s)) {
+							break receiverLoop
+						}
+					case unwrapper[signals.Receiver[T]]:
+						if !yield(s.Unwrap()) {
+							break receiverLoop
+						}
+					case unwrapper[*receiver[T]]:
+						if !yield(s.Unwrap()) {
+							break receiverLoop
+						}
+					default:
+						panic(fmt.Sprintf("cannot unwrap %T into %s", s, reflect.TypeFor[signals.Receiver[T]]()))
 					}
 				}
 			}

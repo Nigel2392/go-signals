@@ -7,7 +7,6 @@ import (
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/internal/omap"
-	"github.com/Nigel2392/go-signals/internal/subscriber"
 )
 
 var (
@@ -23,7 +22,7 @@ type Pool[T any] struct {
 	signals map[string]*signal[T]
 
 	// map of topic to subscribers,
-	subscribers map[string]*subscriber.Subscriber[T]
+	subscribers map[string]*Sub[T]
 
 	// used to skip a reflect step when decoding messages
 	typ reflect.Type
@@ -33,7 +32,7 @@ func New[T any](clientCtx context.Context, pubsub any, opts ...PoolOption) *Pool
 	pool := &Pool[T]{
 		BasePool:    NewBasePool[*Pool[T]](clientCtx, pubsub),
 		signals:     make(map[string]*signal[T]),
-		subscribers: make(map[string]*subscriber.Subscriber[T]),
+		subscribers: make(map[string]*Sub[T]),
 		typ:         reflect.TypeFor[T](),
 	}
 
@@ -112,7 +111,7 @@ func (r *Pool[T]) Cycle(ctx context.Context, resend bool) (Processor, error) {
 	return r.P.Cycle(ctx, r.subscribers, r.signals, resend)
 }
 
-func (r *Pool[T]) newSub(signal string, createIfNotExists bool) (*subscriber.Subscriber[T], bool) {
+func (r *Pool[T]) newSub(signal string, createIfNotExists bool) (*Sub[T], bool) {
 	s, ok := r.subscribers[signal]
 	if ok {
 		return s, false
@@ -122,7 +121,7 @@ func (r *Pool[T]) newSub(signal string, createIfNotExists bool) (*subscriber.Sub
 		return nil, false
 	}
 
-	s = &subscriber.Subscriber[T]{
+	s = &Sub[T]{
 		Receivers: omap.NewOrderedMap(0, signals.Receiver[T].ID),
 	}
 	r.subscribers[signal] = s

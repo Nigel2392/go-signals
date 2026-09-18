@@ -14,7 +14,18 @@ type unwrapper[T any] interface {
 func unwrapRecvs[UNWRAPPED any](orig []signals.Receiver[any]) []signals.Receiver[UNWRAPPED] {
 	var recvs = make([]signals.Receiver[UNWRAPPED], len(orig))
 	for i, r := range orig {
-		recvs[i] = TypedReceiver[UNWRAPPED](r)
+		switch s := r.(type) {
+		case *ifaceReceiver[UNWRAPPED]:
+			recvs[i] = s.Receiver
+		case *wrappedReceiver[UNWRAPPED]:
+			recvs[i] = (*receiver[UNWRAPPED])(s)
+		case unwrapper[signals.Receiver[UNWRAPPED]]:
+			recvs[i] = s.Unwrap()
+		case unwrapper[*receiver[UNWRAPPED]]:
+			recvs[i] = s.Unwrap()
+		default:
+			panic(fmt.Sprintf("cannot unwrap %T into %s", s, reflect.TypeFor[signals.Receiver[UNWRAPPED]]()))
+		}
 	}
 	return recvs
 }

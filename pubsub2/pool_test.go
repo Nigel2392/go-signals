@@ -7,7 +7,6 @@ import (
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/internal/omap"
-	"github.com/Nigel2392/go-signals/internal/subscriber"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
@@ -91,8 +90,13 @@ func TestPoolInternalState(t *testing.T) {
 			t.Errorf("expected closed flag to be true")
 		}
 
-		if pool.Exit != nil {
-			t.Errorf("expected exit channel to be nil")
+		select {
+		case _, ok := <-pool.Exit:
+			if ok {
+				t.Errorf("expected exit channel to be closed")
+			}
+		default:
+			t.Errorf("expected exit channel to be closed")
 		}
 	})
 }
@@ -190,45 +194,6 @@ func TestPoolLoop(t *testing.T) {
 	pool.Close() // Should be safe to call again or if cancel didn't clean up
 }
 
-func TestPool_SubscriberCache(t *testing.T) {
-	client := NewMockPubSub(true)
-	pool := New(t.Context(), client)
-
-	sig := pool.NewSignal[string](context.Background(), "test_topic")
-
-	// Connect a receiver to create the subscriber
-	recv, _ := sig.Listen(context.Background(), func(ctx context.Context, s signals.Signal[string], val string) error {
-		return nil
-	})
-
-	pool.P.Mu.RLock()
-	sub := pool.subscribers["test_topic"]
-	pool.P.Mu.RUnlock()
-
-	// Initial dirty flag should be true after add
-	if !sub.Dirty.Load() {
-		t.Errorf("expected subscriber to be dirty after add")
-	}
-
-	// Call checkDirty to rebuild cache
-	sub.CheckDirty()
-
-	if sub.Dirty.Load() {
-		t.Errorf("expected subscriber to not be dirty after checkDirty")
-	}
-
-	if len(sub.Cached) != 1 || TypedReceiver[string](sub.Cached[0]) != recv {
-		t.Errorf("expected cached slice to contain the receiver")
-	}
-
-	// Removing the receiver should set dirty again
-	sig.Disconnect(context.Background(), recv)
-
-	if !sub.Dirty.Load() {
-		t.Errorf("expected subscriber to be dirty after delete")
-	}
-}
-
 func TestPool_DecodeErrorHandling(t *testing.T) {
 	client := NewMockPubSub(true)
 
@@ -254,7 +219,7 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	q := omap.NewOrderedMap(0, signals.Receiver[any].ID)
 	q.Set(&wrappedReceiver[any]{id: "dummy"})
 
-	pool.subscribers["test_topic"] = &subscriber.Subscriber[any]{
+	pool.subscribers["test_topic"] = &pubsub.Sub[any]{
 		Pubsub:    mockSub,
 		Receivers: q,
 	}

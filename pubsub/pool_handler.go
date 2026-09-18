@@ -41,19 +41,13 @@ type ReceiversIter[T any] struct {
 
 type Handler[POOLTYPE AbstractPool, T any] struct {
 	Value         T
-	Signal        signals.Signal[T]
+	Signal        PoolSignal[T]
 	Receivers     []signals.Receiver[T]
 	ReceiversIter ReceiversIter[T]
 	Message       *Message
 
 	BasePool *BasePool[POOLTYPE]
 	// process sync.Once
-}
-
-func NewHandler[POOLTYPE AbstractPool, T any](basePool *BasePool[POOLTYPE]) Handler[POOLTYPE, T] {
-	return Handler[POOLTYPE, T]{
-		BasePool: basePool,
-	}
 }
 
 // Execute the receivers with the provided value

@@ -7,7 +7,6 @@ import (
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/internal/omap"
-	"github.com/Nigel2392/go-signals/internal/subscriber"
 )
 
 func TestPoolInternalState(t *testing.T) {
@@ -210,25 +209,25 @@ func TestPool_SubscriberCache(t *testing.T) {
 	pool.P.Mu.RUnlock()
 
 	// Initial dirty flag should be true after add
-	if !sub.Dirty.Load() {
+	if !sub.dirty.Load() {
 		t.Errorf("expected subscriber to be dirty after add")
 	}
 
 	// Call checkDirty to rebuild cache
-	sub.CheckDirty()
+	sub.checkDirty()
 
-	if sub.Dirty.Load() {
+	if sub.dirty.Load() {
 		t.Errorf("expected subscriber to not be dirty after checkDirty")
 	}
 
-	if len(sub.Cached) != 1 || sub.Cached[0] != recv {
+	if len(sub.cached) != 1 || sub.cached[0] != recv {
 		t.Errorf("expected cached slice to contain the receiver")
 	}
 
 	// Removing the receiver should set dirty again
 	sig.Disconnect(context.Background(), recv)
 
-	if !sub.Dirty.Load() {
+	if !sub.dirty.Load() {
 		t.Errorf("expected subscriber to be dirty after delete")
 	}
 }
@@ -258,7 +257,7 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	q := omap.NewOrderedMap(0, signals.Receiver[string].ID)
 	q.Set(&receiver[string]{id: "dummy"})
 
-	pool.subscribers["test_topic"] = &subscriber.Subscriber[string]{
+	pool.subscribers["test_topic"] = &Sub[string]{
 		Pubsub:    mockSub,
 		Receivers: q,
 	}

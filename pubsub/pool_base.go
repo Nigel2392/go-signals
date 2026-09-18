@@ -14,7 +14,6 @@ import (
 
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/internal/spinner"
-	"github.com/Nigel2392/go-signals/internal/subscriber"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
 )
 
@@ -390,7 +389,7 @@ func (r *p[P]) setupClient(ctx context.Context) error {
 // quickly as possible, only being limited by the scheduler.
 //
 // Using this function is also great for benchmarking, as it isnt reliant on the timer.
-func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs map[string]*subscriber.Subscriber[T], sigs map[string]SIGNAL) iter.Seq2[Handler[P, T], error] {
+func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs map[string]*Sub[T], sigs map[string]SIGNAL) iter.Seq2[Handler[P, T], error] {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
@@ -443,7 +442,8 @@ func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs m
 	}
 }
 
-func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*subscriber.Subscriber[T], sigs map[string]SIGNAL, resend bool) (Processor, error) {
+// Cycle tries to pluck a value from the pool
+func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], sigs map[string]SIGNAL, resend bool) (Processor, error) {
 	if !r.ClientWasSetup() {
 		_, err := r.b.Client(ctx) // init lazy clients
 		if err != nil {
@@ -478,10 +478,10 @@ func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribe
 	return handler, nil
 }
 
-func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*subscriber.Subscriber[T], signals map[string]SIGNAL) (handler Handler[P, T], ok bool, err error) {
+func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], signals map[string]SIGNAL) (handler Handler[P, T], ok bool, err error) {
 
 	r.Mu.RLock()
-	snapShots := subscriber.Snapshot(subscribers, signals)
+	snapShots := snapshot(subscribers, signals)
 	r.Mu.RUnlock()
 
 	var spin spinner.Spinner
@@ -491,11 +491,11 @@ func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs
 
 			// rebuild subscriber cache if required
 			// allows for better concurrency
-			if snapshot.Sub.Dirty.Load() {
+			if snapshot.Sub.dirty.Load() {
 				r.Mu.Lock()
-				snapshot.Sub.Undirtify()
+				snapshot.Sub.undirtify()
 				r.Mu.Unlock()
-				snapshot.Sub.Dirty.Store(false)
+				snapshot.Sub.dirty.Store(false)
 			}
 
 			// see if we should exit the loop
@@ -524,7 +524,7 @@ func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs
 
 			handler.Value = val
 			handler.Signal = snapshot.Sig
-			handler.Receivers = snapshot.Sub.Cached
+			handler.Receivers = snapshot.Sub.cached
 			handler.Message = msg
 			handler.BasePool = r.b
 
@@ -535,7 +535,7 @@ func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs
 	}
 }
 
-func (r *p[P]) ChanCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, subscribers map[string]*subscriber.Subscriber[T], signals map[string]SIGNAL, resend bool) (h Handler[P, T], ok bool, err error) {
+func (r *p[P]) ChanCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, subscribers map[string]*Sub[T], signals map[string]SIGNAL, resend bool) (h Handler[P, T], ok bool, err error) {
 	var payload Message
 	select {
 	case payload, ok = <-r.b.Data:
@@ -589,11 +589,11 @@ func (r *p[P]) ChanCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneC
 
 	// rebuild subscriber cache if required
 	// allows for better concurrency
-	if sub.Dirty.Load() {
+	if sub.dirty.Load() {
 		r.Mu.Lock()
-		sub.Undirtify()
+		sub.undirtify()
 		r.Mu.Unlock()
-		sub.Dirty.Store(false)
+		sub.dirty.Store(false)
 	}
 
 	// decode value to send to receivers
@@ -602,11 +602,10 @@ func (r *p[P]) ChanCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneC
 		return h, true, err
 	}
 
-	// process
-	handler := NewHandler[P, T](r.b)
-	handler.Value = val
-	handler.Signal = sig
-	handler.Receivers = sub.Cached
-	handler.Message = message
-	return handler, true, nil
+	h.Value = val
+	h.Signal = sig
+	h.Receivers = sub.cached
+	h.Message = message
+	h.BasePool = r.b
+	return h, true, nil
 }
