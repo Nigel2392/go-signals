@@ -9,31 +9,6 @@ import (
 
 var _ Processor = (*Handler[AbstractPool, any])(nil)
 
-// Execute the receivers with the provided value
-//
-// Returns an error, which might contain multiple joined errors.
-func ProcessNow[POOL any, T any](ctx context.Context, p POOL, s signals.Signal[T], receivers []signals.Receiver[T], message *Message, v T) error {
-	ctx = contextWithPool(ctx, p)
-	ctx = ContextWithMessage(ctx, message)
-
-	var errs []error
-	for _, receiver := range receivers {
-		// err := receive(ctx, s, receiver, value)
-		err := signals.Receive(ctx, s, receiver, v)
-		if err != nil {
-			errs = append(errs, signals.ErrReceiver.WithCause(err).Wrapf(
-				"receiver %q:", receiver.ID(),
-			))
-		}
-	}
-
-	if len(errs) > 0 {
-		return signals.Error{Val: "error(s) while executing receivers", Errors: errs}
-	}
-
-	return nil
-}
-
 type ReceiversIter[T any] struct {
 	Len       int
 	Receivers iter.Seq[signals.Receiver[T]]
@@ -48,6 +23,43 @@ type Handler[POOLTYPE AbstractPool, T any] struct {
 
 	BasePool *BasePool[POOLTYPE]
 	// process sync.Once
+}
+
+// Execute the receivers with the provided value
+//
+// Returns an error, which might contain multiple joined errors.
+func (r Handler[P, T]) ProcessNow(ctx context.Context) error {
+	var errs []error
+	ctx = contextWithPool(ctx, r.BasePool.backref)
+	ctx = ContextWithMessage(ctx, r.Message)
+
+	if r.ReceiversIter.Receivers != nil {
+		for receiver := range r.ReceiversIter.Receivers {
+			// err := receive(ctx, s, receiver, value)
+			err := signals.Receive(ctx, r.Signal, receiver, r.Value)
+			if err != nil {
+				errs = append(errs, signals.ErrReceiver.WithCause(err).Wrapf(
+					"receiver %q:", receiver.ID(),
+				))
+			}
+		}
+	} else {
+		for _, receiver := range r.Receivers {
+			// err := receive(ctx, s, receiver, value)
+			err := signals.Receive(ctx, r.Signal, receiver, r.Value)
+			if err != nil {
+				errs = append(errs, signals.ErrReceiver.WithCause(err).Wrapf(
+					"receiver %q:", receiver.ID(),
+				))
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return signals.Error{Val: "error(s) while executing receivers", Errors: errs}
+	}
+
+	return nil
 }
 
 // Execute the receivers with the provided value

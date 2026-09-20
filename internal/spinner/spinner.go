@@ -2,7 +2,6 @@ package spinner
 
 import (
 	"runtime"
-	"time"
 )
 
 // Spinner is used in tight loops to prevent the CPU
@@ -12,8 +11,6 @@ import (
 // 100 - 140 spins: [runtime.Gosched]
 // 140 - 200 spins: [time.Sleep] for 1 microsecond
 type Spinner uint32
-
-var _MS100 = 100 * time.Microsecond
 
 func (s *Spinner) Spin() {
 	i := *s
@@ -32,13 +29,6 @@ func (s *Spinner) Spin() {
 	case i <= 140:
 		runtime.Gosched()
 		*s++
-
-	case i <= 200:
-		time.Sleep(time.Microsecond)
-		*s++
-
-	default:
-		time.Sleep(_MS100)
 	}
 }
 

@@ -4,10 +4,12 @@ import (
 	"context"
 	"uuid"
 
+	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
 )
 
 type ConfigPool interface {
+	WithLog(logger.Log)
 	WithEncoder(encoder.Encoder)
 	WithInstanceID(uuid.UUID)
 	WithAutoInitClient(bool)
@@ -22,6 +24,12 @@ type PoolOption func(p ConfigPool)
 func PoolEncoder[T any](enc encoder.Encoder) PoolOption {
 	return func(p ConfigPool) {
 		p.WithEncoder(enc)
+	}
+}
+
+func PoolLog(fn logger.Log) PoolOption {
+	return func(p ConfigPool) {
+		p.WithLog(fn)
 	}
 }
 

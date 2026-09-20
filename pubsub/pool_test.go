@@ -235,10 +235,7 @@ func TestPool_SubscriberCache(t *testing.T) {
 func TestPool_DecodeErrorHandling(t *testing.T) {
 	client := NewMockPubSub(true)
 
-	var lastErr error
-	pool := New[string](t.Context(), client, PoolOnError(func(ctx context.Context, p *Pool[string], err error) {
-		lastErr = err
-	}))
+	pool := New[string](t.Context(), client)
 
 	pool.NewSignal(context.Background(), "test_topic")
 
@@ -266,9 +263,12 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	// Cycle will pop from TryReceive, try to decode, and fail
 	// calling the Process method on the handler is not required in this case,
 	// as decoding is done before processing.
-	_, lastErr = pool.Cycle(context.Background(), false)
-	if lastErr == nil {
-		t.Errorf("expected decoding error")
-		return
+	for _, err := range pool.Cycle(context.Background(), 0, false) {
+		if err == nil {
+			t.Errorf("expected decoding error")
+			return
+		} else {
+			t.Logf("got error %v", err)
+		}
 	}
 }

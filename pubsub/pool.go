@@ -10,9 +10,9 @@ import (
 )
 
 var (
-	_ PubSubPool[any, *Pool[any]] = (*Pool[any])(nil)
-	_ ConfigPool                  = (*Pool[any])(nil)
-	_ ConfigErrPool[*Pool[any]]   = (*Pool[any])(nil)
+	_ PubSubPool[any, Handler[*Pool[any], any], *Pool[any]] = (*Pool[any])(nil)
+	_ ConfigPool                                            = (*Pool[any])(nil)
+	_ ConfigErrPool[*Pool[any]]                             = (*Pool[any])(nil)
 )
 
 type Pool[T any] struct {
@@ -73,6 +73,10 @@ func (r *Pool[T]) Send(ctx context.Context, topic string, value T) error {
 	return r.BasePool.Send(ctx, topic, value)
 }
 
+func (r *Pool[T]) Close() error {
+	return r.BasePool.Close(r.subscribers)
+}
+
 func (r *Pool[T]) NewSignal(_ context.Context, name string) signals.Signal[T] {
 	r.P.Mu.Lock()
 	defer r.P.Mu.Unlock()
@@ -107,8 +111,8 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[*Pool[T], T], 
 	return r.P.WaitLoop(ctx, r.subscribers, r.signals)
 }
 
-func (r *Pool[T]) Cycle(ctx context.Context, resend bool) (Processor, error) {
-	return r.P.Cycle(ctx, r.subscribers, r.signals, resend)
+func (r *Pool[T]) Cycle(ctx context.Context, tries int, resend bool) iter.Seq2[Processor, error] {
+	return r.P.Cycle(ctx, tries, r.subscribers, r.signals, resend)
 }
 
 func (r *Pool[T]) newSub(signal string, createIfNotExists bool) (*Sub[T], bool) {

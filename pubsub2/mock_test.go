@@ -102,7 +102,7 @@ func (m *MockPubSub) Subscribe(ctx context.Context, topic string) (pubsub.Subscr
 	return sub, nil
 }
 
-func (m *MockPubSub) BindChannel(ctx context.Context, binder pubsub.ChannelBinder) {
+func (m *MockPubSub) BindChannel(ctx context.Context, binder pubsub.AbstractPool) {
 	if m.publish != nil {
 		binder.SetChannel(ctx, m.publish)
 	}

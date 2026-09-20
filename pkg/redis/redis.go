@@ -19,10 +19,15 @@ type MinimalClient interface {
 
 // PubSub creates a new Redis PubSub client.
 // If async is false, it allocates a channel to bind to the Pool's WaitLoop.
-func PubSub(async bool, c any) any {
+func PubSub(async bool, c any, channelSize ...int) any {
+	var chanSize = 16
+	if len(channelSize) > 0 {
+		chanSize = channelSize[0]
+	}
+
 	var ch chan pubsub.Message
 	if !async {
-		ch = make(chan pubsub.Message)
+		ch = make(chan pubsub.Message, chanSize)
 	}
 
 	rps := &redisPubSub{
@@ -68,7 +73,7 @@ func (s *redisPubSub) client() MinimalClient {
 	return s._client
 }
 
-func (s *redisPubSub) BindChannel(ctx context.Context, b pubsub.ChannelBinder) {
+func (s *redisPubSub) BindChannel(ctx context.Context, b pubsub.AbstractPool) {
 	if s.publish != nil {
 		b.SetChannel(ctx, s.publish)
 	}
@@ -161,12 +166,14 @@ func (s *redisSubscriber) forward(ctx context.Context, out chan<- pubsub.Message
 			return
 		}
 
-		// for msg := range s.ch {
-		out <- pubsub.Message{
+		select {
+		case out <- pubsub.Message{
 			Channel: msg.Channel,
 
 			// payload is an encoded pubsub.Message!!!
-			Data: []byte(msg.Payload),
+			Data: []byte(msg.Payload)}:
+		default: // out is closed
+			return
 		}
 	}
 }

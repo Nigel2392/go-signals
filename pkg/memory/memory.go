@@ -11,7 +11,7 @@ var _ pubsub.PubSubBinder = (*memoryPubSub)(nil)
 var _ pubsub.Subscriber = (*memorySubscriber)(nil)
 
 func PubSub(async bool, channelSize ...int) pubsub.PubSub {
-	var chanSize = 5
+	var chanSize = 16
 	if len(channelSize) > 0 {
 		chanSize = channelSize[0]
 	}
@@ -32,7 +32,7 @@ type memoryPubSub struct {
 	subscribers map[string]memorySubscriber
 }
 
-func (s *memoryPubSub) BindChannel(ctx context.Context, b pubsub.ChannelBinder) {
+func (s *memoryPubSub) BindChannel(ctx context.Context, b pubsub.AbstractPool) {
 	if s.publish != nil {
 		b.SetChannel(ctx, s.publish)
 	}
@@ -95,6 +95,5 @@ func (s memorySubscriber) TryReceive() ([]byte, bool) {
 }
 
 func (r memorySubscriber) Close() error {
-	close(r)
 	return nil
 }

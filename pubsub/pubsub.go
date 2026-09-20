@@ -6,18 +6,27 @@ import (
 	"fmt"
 	"iter"
 	"log"
+	"os"
 	"reflect"
+	"runtime/debug"
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
 )
+
+var StdPoolLog = func(p AbstractPool) logger.Log {
+	return logger.WriterLog{
+		UseTimestamps: true,
+		PkgName:       p.ID().String(),
+		Out:           os.Stdout,
+	}
+}
 
 // Custom encoders can be provided to easily serialize and deserialize
 // data across the pubsub signal pool's publishing lifecycle
 type Encoder = encoder.Encoder
-
-var ErrPoolClosed = signals.ErrPool.Wrap("pool is closed")
 
 type PoolSignal[T any] interface {
 	MsgType() reflect.Type
@@ -25,22 +34,25 @@ type PoolSignal[T any] interface {
 }
 
 type Processor interface {
+	ProcessNow(context.Context) error
 	Process(context.Context) <-chan error
 }
 
 type AbstractPool interface {
-	ChannelBinder
-
-	// Cycle tries to pull a single value from the pool
-	//
-	// This is a blocking operation.
-	Cycle(ctx context.Context, resend bool) (Processor, error)
+	Client(ctx context.Context) (PubSub, error)
+	Channel(ctx context.Context) chan Message
+	SetChannel(ctx context.Context, ch chan Message)
 
 	// The instance ID of the pool
 	ID() uuid.UUID
 
+	// Cycle tries to pull a single value from the pool
+	//
+	// This is a blocking operation.
+	Cycle(ctx context.Context, tries int, resend bool) iter.Seq2[Processor, error]
+
 	// Stop all loops and close the pool down so no further processing can occur.
-	Close()
+	Close() error
 }
 
 // The PubSubPool is the interface that [Pool] implements.
@@ -51,7 +63,7 @@ type AbstractPool interface {
 //
 // * `github.com/Nigel2392/go-signals/pkg/memory`
 // * `github.com/Nigel2392/go-signals/pkg/redis`
-type PubSubPool[T any, P PubSubPool[T, P]] interface {
+type PubSubPool[T any, PROCESSOR Processor, P PubSubPool[T, PROCESSOR, P]] interface {
 	signals.SignalPool[T]
 	AbstractPool
 
@@ -62,7 +74,7 @@ type PubSubPool[T any, P PubSubPool[T, P]] interface {
 	//
 	// This means that any values sent from a signal propagate as
 	// quickly as possible, only being limited by the scheduler.
-	WaitLoop(ctx context.Context) iter.Seq2[Handler[P, T], error]
+	WaitLoop(ctx context.Context) iter.Seq2[PROCESSOR, error]
 
 	// Send data across the pool for a topic to use.
 	//
@@ -85,7 +97,7 @@ type PubSub interface {
 
 // Bind a [PubSub] to a [Pool] type.
 type PubSubBinder interface {
-	BindChannel(context.Context, ChannelBinder)
+	BindChannel(context.Context, AbstractPool)
 }
 
 // PubSubMsgMaker allows for [PubSub] objects
@@ -133,19 +145,21 @@ type Message struct {
 	Error error
 }
 
-// ChannelBinder is implemented by the [Pool] type to
-// allow for the blocking WaitLoop function.
-type ChannelBinder interface {
-	Client(ctx context.Context) (PubSub, error)
-	Channel(ctx context.Context) chan Message
-	SetChannel(ctx context.Context, ch chan Message)
+type pPool[POOLTYPE AbstractPool] interface {
+	AbstractPool
+	p() *p[POOLTYPE]
 }
 
-type waitPool[HANDLER Processor] interface {
-	WaitLoop(context.Context) iter.Seq2[HANDLER, error]
+type waitPool[PROCESSOR Processor, POOLTYPE AbstractPool] interface {
+	pPool[POOLTYPE]
+	WaitLoop(ctx context.Context) iter.Seq2[PROCESSOR, error]
 }
 
-func GoLoop[POOLTYPE waitPool[HANDLER], HANDLER Processor](ctx context.Context, pool POOLTYPE, chanSize int, autoDrain ...bool) <-chan error {
+//	func CycleAndProcess[T any, POOLTYPE pPool[POOLTYPE]](ctx context.Context, pool POOLTYPE) <-chan error {
+//
+//	}
+
+func GoLoop[POOLTYPE waitPool[HANDLER, POOLTYPE], HANDLER Processor](ctx context.Context, pool POOLTYPE, chanSize int, autoDrain ...bool) <-chan error {
 
 	var drain bool
 	var errCh chan error
@@ -164,14 +178,14 @@ func GoLoop[POOLTYPE waitPool[HANDLER], HANDLER Processor](ctx context.Context, 
 			if p := recover(); p != nil {
 				var err error
 				if e, ok := p.(error); ok {
-					err = fmt.Errorf("[%T.Loop] panic recovered: %w", pool, e)
+					err = fmt.Errorf("[%T.Loop] panic recovered: %w: %s", pool, e, string(debug.Stack()))
 				} else {
-					err = fmt.Errorf("[%T.Loop] panic recovered: %v", pool, p)
+					err = fmt.Errorf("[%T.Loop] panic recovered: %v: %s", pool, p, string(debug.Stack()))
 				}
 				log.Println(err)
 			}
 
-			log.Printf("loop stopped after processing %d signals", *ct)
+			pool.p().log.Printf(ctx, logger.WARN, "stopped after processing %d signals", *ct)
 		}()
 
 		for h, err := range pool.WaitLoop(ctx) {
@@ -181,6 +195,7 @@ func GoLoop[POOLTYPE waitPool[HANDLER], HANDLER Processor](ctx context.Context, 
 			}
 
 			for err := range h.Process(ctx) {
+
 				if drain {
 					log.Printf("error during receiver processing: %v", err)
 				} else {

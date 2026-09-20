@@ -94,6 +94,10 @@ func (r *Pool) NewSignal[T any](_ context.Context, name string) signals.Signal[T
 	return (*signal[T])(sig.(*wrappedSignal[T]))
 }
 
+func (r *Pool) Close() error {
+	return r.BasePool.Close(r.subscribers)
+}
+
 // Execute the scheduling loop in a synchronous blocking mode.
 //
 // if Pool.Data channel is non-nil, synchronous mode is active
@@ -113,8 +117,8 @@ func (r *Pool) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*Pool, any
 	return r.P.WaitLoop(ctx, r.subscribers, r.signals)
 }
 
-func (r *Pool) Cycle(ctx context.Context, resend bool) (pubsub.Processor, error) {
-	return r.P.Cycle(ctx, r.subscribers, r.signals, resend)
+func (r *Pool) Cycle(ctx context.Context, tries int, resend bool) iter.Seq2[pubsub.Processor, error] {
+	return r.P.Cycle(ctx, tries, r.subscribers, r.signals, resend)
 }
 
 func (r *Pool) newSub(signal string, createIfNotExists bool) (*pubsub.Sub[any], bool) {

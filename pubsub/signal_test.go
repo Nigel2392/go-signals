@@ -10,6 +10,7 @@ import (
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/pkg/logger"
 )
 
 var totalReceivers = 32000
@@ -34,6 +35,7 @@ func BenchmarkSignals(b *testing.B) {
 		func() PubSub {
 			return NewMockPubSub(false)
 		},
+		PoolLog(logger.Null{}),
 		PoolOnError(func(ctx context.Context, p *Pool[string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
@@ -98,6 +100,7 @@ func BenchmarkSignalsParralel(b *testing.B) {
 		func() PubSub {
 			return NewMockPubSub(false)
 		},
+		PoolLog(logger.Null{}),
 		PoolOnError(func(ctx context.Context, p *Pool[string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
@@ -225,10 +228,16 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 	}
 
 	// Trigger manual pull
-	p, _ := pool.Cycle(context.Background(), false)
-	err, _ = <-p.Process(context.Background())
-	if err != nil {
-		t.Errorf("expected no error, but got %v", err)
+	for p, err := range pool.Cycle(context.Background(), 0, false) {
+		if err != nil {
+			t.Errorf("expected no error, but got %v", err)
+			continue
+		}
+
+		if err := p.ProcessNow(t.Context()); err != nil {
+			t.Errorf("expected no error, but got %v", err)
+			continue
+		}
 	}
 
 	select {

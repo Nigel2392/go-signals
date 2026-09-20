@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub"
 	"github.com/Nigel2392/go-signals/pubsub2"
 	"github.com/alicebob/miniredis/v2"
@@ -50,6 +51,7 @@ func BenchmarkSignals(b *testing.B) {
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
+		pubsub.PoolLog(logger.Null{}),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[*string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
@@ -116,6 +118,7 @@ func BenchmarkSignalsParallel(b *testing.B) {
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
+		pubsub.PoolLog(logger.Null{}),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[*string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
@@ -180,6 +183,7 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
+		pubsub.PoolLog(logger.Null{}),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
@@ -246,6 +250,7 @@ func BenchmarkSignalsPubsub2Parallel(b *testing.B) {
 		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
+		pubsub.PoolLog(logger.Null{}),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
@@ -894,7 +899,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 
 	pool := pubsub.GoNew[string](
 		t.Context(),
-		PubSub(true, redis.NewClient(&redis.Options{
+		PubSub(false, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolClientInit(true),
@@ -934,7 +939,25 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 		t.Errorf("Expected no errors during nested sends, got: %s", err.Error())
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	// time.Sleep(50 * time.Millisecond)
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(5*time.Second))
+	defer cancel()
+
+	for p, err := range pool.Cycle(ctx, 0, false) {
+		if errors.Is(err, context.DeadlineExceeded) {
+			break
+		}
+
+		if err != nil {
+			t.Fatalf("got error %v", err)
+		}
+
+		err = p.ProcessNow(context.Background())
+		if err != nil {
+			t.Errorf("expected no error, but got %v", err)
+		}
+
+	}
 
 	if callCount.Load() != maxCalls {
 		t.Errorf("Expected %d calls, got %d", maxCalls, callCount.Load())

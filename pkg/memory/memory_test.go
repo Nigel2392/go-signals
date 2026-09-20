@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub"
 	"github.com/Nigel2392/go-signals/pubsub2"
 	"github.com/google/uuid"
@@ -80,6 +81,7 @@ func BenchmarkSignals(b *testing.B) {
 		func(context.Context) pubsub.PubSub {
 			return PubSub(false)
 		},
+		pubsub.PoolLog(logger.Null{}),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub.Pool[*string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
@@ -139,6 +141,7 @@ func BenchmarkSignalsPubsub2(b *testing.B) {
 	pool := pubsub2.New(
 		b.Context(),
 		PubSub(false),
+		pubsub.PoolLog(logger.Null{}),
 		pubsub.PoolOnError(func(ctx context.Context, p *pubsub2.Pool, err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
@@ -223,6 +226,10 @@ func TestSignalsSynchronous(t *testing.T) {
 		for h, err := range pool.WaitLoop(t.Context()) {
 			// b.Log(v, err)
 			if err != nil {
+				if errors.Is(err, pubsub.ErrPoolClosed) {
+					return
+				}
+
 				t.Error(err)
 				return
 			}
@@ -331,7 +338,7 @@ func TestPoolSend(t *testing.T) {
 	mu.Lock()
 
 	if len(typeList) != 4 {
-		t.Errorf("Expected 4 items in typeList, got %d: %v", len(typeList), typeList)
+		t.Errorf("Expected %q 4 items in typeList, got %d: %v", pool.ID(), len(typeList), typeList)
 	}
 
 	mu.Unlock()
@@ -520,7 +527,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	if callCount.Load() != maxCalls {
-		t.Errorf("Expected %d calls, got %d", maxCalls, callCount.Load())
+		t.Errorf("Expected %q %d calls, got %d", pool.ID(), maxCalls, callCount.Load())
 	}
 
 	select {

@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
@@ -29,6 +30,7 @@ func BenchmarkSignals(b *testing.B) {
 		func() pubsub.PubSub {
 			return NewMockPubSub(false)
 		},
+		pubsub.PoolLog(logger.Null{}),
 		pubsub.PoolClientInit(true),
 		pubsub.PoolOnError(func(ctx context.Context, p *Pool, err error) {
 			b.Log(string(debug.Stack()))
@@ -100,6 +102,7 @@ func BenchmarkSignalsSendAsync(b *testing.B) {
 		func() pubsub.PubSub {
 			return NewMockPubSub(false)
 		},
+		pubsub.PoolLog(logger.Null{}),
 		pubsub.PoolClientInit(true),
 		pubsub.PoolOnError(func(ctx context.Context, p *Pool, err error) {
 			b.Log(string(debug.Stack()))
@@ -232,16 +235,22 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 		t.Fatalf("Listen error: %v", err)
 	}
 
-	err = sig.Send(context.Background(), "test message")
+	err = sig.Send(t.Context(), "test message")
 	if err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 
 	// Trigger manual pull
-	p, _ := pool.Cycle(context.Background(), false)
-	err, _ = <-p.Process(context.Background())
-	if err != nil {
-		t.Errorf("expected no error, but got %v", err)
+	for p, err := range pool.Cycle(context.Background(), 0, false) {
+		if err != nil {
+			t.Errorf("expected no error, but got %v", err)
+			continue
+		}
+
+		if err := p.ProcessNow(t.Context()); err != nil {
+			t.Errorf("expected no error, but got %v", err)
+			continue
+		}
 	}
 
 	select {
@@ -253,7 +262,7 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 		t.Errorf("timed out waiting for message processing")
 	}
 
-	err = sig.Disconnect(context.Background(), recv)
+	err = sig.Disconnect(t.Context(), recv)
 	if err != nil {
 		t.Errorf("Disconnect error: %v", err)
 	}

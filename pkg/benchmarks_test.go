@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pkg/memory"
 	"github.com/Nigel2392/go-signals/pkg/redis"
 	"github.com/Nigel2392/go-signals/pubsub"
@@ -232,6 +233,7 @@ func BenchmarkPkg(b *testing.B) {
 					p := pool.newPool(
 						b,
 						bench.init(b, false),
+						pubsub.PoolLog(logger.Null{}),
 					)
 
 					var incr = new(atomic.Int64)
@@ -274,6 +276,7 @@ func BenchmarkPkg(b *testing.B) {
 					p := pool.newPool(
 						b,
 						bench.init(b, false),
+						pubsub.PoolLog(logger.Null{}),
 					)
 
 					var incr = new(atomic.Int64)
@@ -291,15 +294,21 @@ func BenchmarkPkg(b *testing.B) {
 							b.Error(err)
 						}
 
-						h, err := p.Cycle(b.Context(), false)
-						if err != nil {
-							b.Error(err)
-							continue
+						for p, err := range p.Cycle(b.Context(), 0, false) {
+							if errors.Is(err, context.DeadlineExceeded) {
+								break
+							}
+
+							if err != nil {
+								b.Fatalf("got error %v", err)
+							}
+
+							err = p.ProcessNow(context.Background())
+							if err != nil {
+								b.Errorf("expected no error, but got %v", err)
+							}
 						}
 
-						for err = range h.Process(b.Context()) {
-							b.Error(err)
-						}
 					}
 
 					b.StopTimer()
@@ -321,6 +330,7 @@ func BenchmarkPkg(b *testing.B) {
 					p := pool.newPool(
 						b,
 						bench.init(b, true),
+						pubsub.PoolLog(logger.Null{}),
 					)
 
 					var incr = new(atomic.Int64)
@@ -338,15 +348,21 @@ func BenchmarkPkg(b *testing.B) {
 							b.Error(err)
 						}
 
-						h, err := p.Cycle(b.Context(), false)
-						if err != nil {
-							b.Error(err)
-							continue
+						for p, err := range p.Cycle(b.Context(), 0, false) {
+							if errors.Is(err, context.DeadlineExceeded) {
+								break
+							}
+
+							if err != nil {
+								b.Fatalf("got error %v", err)
+							}
+
+							err = p.ProcessNow(context.Background())
+							if err != nil {
+								b.Errorf("expected no error, but got %v", err)
+							}
 						}
 
-						for err = range h.Process(b.Context()) {
-							b.Error(err)
-						}
 					}
 
 					b.StopTimer()
@@ -373,6 +389,7 @@ func BenchmarkPkg(b *testing.B) {
 					p := pool.newPool(
 						b,
 						bench.init(b, false),
+						pubsub.PoolLog(logger.Null{}),
 					)
 
 					var incr = new(atomic.Int64)
@@ -421,6 +438,7 @@ func BenchmarkPkg(b *testing.B) {
 					p := pool.newPool(
 						b,
 						bench.init(b, false),
+						pubsub.PoolLog(logger.Null{}),
 					)
 
 					var incr = new(atomic.Int64)
@@ -466,8 +484,13 @@ func BenchmarkPkg(b *testing.B) {
 	}
 }
 
-func iterTestables(_ testing.TB) iter.Seq2[client, _pool] {
+func iterTestables(t testing.TB) iter.Seq2[client, _pool] {
+	t.Helper()
+
 	return func(yield func(client, _pool) bool) {
+
+		t.Helper()
+
 		for _, client := range clients {
 			for _, pool := range pools {
 				if !yield(client, pool) {
@@ -528,28 +551,31 @@ func TestPkg(t *testing.T) {
 					t.Fatalf("Failed to execute cross-trigger: %s", err.Error())
 				}
 
-				h, err := p.Cycle(t.Context(), false)
-				if err != nil {
-					t.Fatalf("error during cycle: %v", err)
-				}
-				if err, _ := <-h.Process(t.Context()); err != nil {
-					t.Fatalf("error during process: %v", err)
-				}
+				for p, err := range p.Cycle(t.Context(), 0, false) {
+					if err != nil {
+						t.Fatalf("error during cycle: %v", err)
+					}
 
-				h, err = p.Cycle(t.Context(), false)
-				if err != nil {
-					t.Fatalf("error during cycle: %v", err)
-				}
-				if err, _ := <-h.Process(t.Context()); err != nil {
-					t.Fatalf("error during process: %v", err)
+					if err := p.ProcessNow(t.Context()); err != nil {
+						t.Fatalf("error during process: %v", err)
+					}
 				}
 
 				ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(time.Second))
 				defer cancel()
 
-				h, err = p.Cycle(ctx, false)
-				if !errors.Is(err, context.DeadlineExceeded) {
-					t.Fatalf("error during cycle: %v", err)
+				for p, err := range p.Cycle(ctx, 0, false) {
+					if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+						t.Fatalf("error during cycle: %v", err)
+					}
+
+					if errors.Is(err, context.DeadlineExceeded) {
+						break
+					}
+
+					if err := p.ProcessNow(ctx); err != nil {
+						t.Fatalf("error during process: %v", err)
+					}
 				}
 
 				// Verify both fired exactly once

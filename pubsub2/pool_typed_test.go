@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
@@ -82,6 +83,7 @@ func BenchmarkSignalsTPool(b *testing.B) {
 		func() pubsub.PubSub {
 			return NewMockPubSub(false)
 		},
+		pubsub.PoolLog(logger.Null{}),
 		pubsub.PoolClientInit(true),
 		pubsub.PoolOnError(func(ctx context.Context, p *Pool, err error) {
 			b.Log(string(debug.Stack()))

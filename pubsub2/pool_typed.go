@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	_ signals.SignalPool[int]             = (*TPool[int])(nil)
-	_ pubsub.AbstractPool                 = (*TPool[int])(nil)
-	_ pubsub.PubSubPool[int, *TPool[int]] = (*TPool[int])(nil)
+	_ signals.SignalPool[int]                                               = (*TPool[int])(nil)
+	_ pubsub.AbstractPool                                                   = (*TPool[int])(nil)
+	_ pubsub.PubSubPool[int, pubsub.Handler[*TPool[int], int], *TPool[int]] = (*TPool[int])(nil)
 )
 
 type TPool[T any] Pool
@@ -28,12 +28,12 @@ func (r *TPool[T]) Pool() *Pool {
 func (r *TPool[T]) ID() uuid.UUID {
 	return (*Pool)(r).ID()
 }
-func (r *TPool[T]) Close() {
-	(*Pool)(r).Close()
+func (r *TPool[T]) Close() error {
+	return (*Pool)(r).Close()
 }
 
-func (r *TPool[T]) Cycle(ctx context.Context, resend bool) (pubsub.Processor, error) {
-	return (*Pool)(r).Cycle(ctx, resend)
+func (r *TPool[T]) Cycle(ctx context.Context, tries int, resend bool) iter.Seq2[pubsub.Processor, error] {
+	return (*Pool)(r).Cycle(ctx, tries, resend)
 }
 
 // custom waitloop handling, change from pubsub.Handler[any] to pubsub.Handler[T]
