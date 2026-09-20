@@ -899,7 +899,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 
 	pool := pubsub.GoNew[string](
 		t.Context(),
-		PubSub(false, redis.NewClient(&redis.Options{
+		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
 		})),
 		pubsub.PoolClientInit(true),
@@ -943,7 +943,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(5*time.Second))
 	defer cancel()
 
-	for p, err := range pool.Cycle(ctx, 0, false) {
+	for p, err := range pool.Cycle(ctx, 1500, false) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			break
 		}

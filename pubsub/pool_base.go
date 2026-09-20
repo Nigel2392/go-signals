@@ -443,14 +443,6 @@ func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs m
 	wg.Add(1)
 
 	var err = r.OnClientInit(ctx, func(ctx context.Context, ps PubSub) error {
-		if r.b.Exit != nil {
-			panic(signals.ErrUnsupported.Wrap(
-				"Pool.Loop() can only be called when in the stopped state",
-			))
-		}
-
-		r.b.Exit = make(chan struct{})
-
 		wg.Done()
 		return nil
 	})
@@ -461,6 +453,16 @@ func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs m
 	}
 
 	wg.Wait()
+
+	r.Mu.Lock()
+	if r.b.Exit != nil {
+		panic(signals.ErrUnsupported.Wrap(
+			"Pool.Loop() can only be called when in the stopped state",
+		))
+	}
+
+	r.b.Exit = make(chan struct{})
+	r.Mu.Unlock()
 
 	return func(yield func(Handler[P, T], error) bool) {
 		var doneCh = ctx.Done()
@@ -715,7 +717,9 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 		waitFor = 100 * time.Microsecond
 	}
 
+	r.Mu.RLock()
 	exit := r.b.Exit
+	r.Mu.RUnlock()
 
 	return func(yield func(CycleResult[P, T]) bool) {
 		var (
