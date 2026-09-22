@@ -14,6 +14,8 @@ import (
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/internal/develop"
+	"github.com/Nigel2392/go-signals/internal/spinner"
 	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
 	"github.com/pkg/errors"
@@ -28,6 +30,11 @@ const (
 	bpf_wasSetup uint32 = 1 << iota
 	bpf_autoInit
 	bpf_clientBound
+)
+
+const (
+	retriesAfterSuccess int = 3
+	DEFAULT_CYCLE_PAUSE     = 100 * time.Microsecond
 )
 
 func defaultPoolError[POOLTYPE any](ctx context.Context, p POOLTYPE, err error) {
@@ -187,6 +194,10 @@ func (r *BasePool[P]) Initialize(ctx context.Context) error {
 		r.Inst = uuid.New()
 	}
 
+	if r.Exit == nil {
+		r.Exit = make(chan struct{})
+	}
+
 	if r.P.log == nil {
 		r.P.log = StdPoolLog(r.backref)
 	}
@@ -253,7 +264,9 @@ func (r *BasePool[P]) Close[T any](subscribers map[string]*Sub[T]) error {
 
 func (r *BasePool[P]) Send[T any](ctx context.Context, topic string, value T) error {
 
-	r.P.log.Printf(ctx, logger.DEBUG, "sending message for topic %q", topic)
+	if develop.DEVELOP {
+		r.P.log.Printf(ctx, logger.DEBUG, "sending message for topic %q", topic)
+	}
 
 	message, err := r.P.newMessage(ctx, topic, value)
 	if err != nil {
@@ -344,12 +357,9 @@ func (p *p[P]) OnError(ctx context.Context, err error) {
 }
 
 func (r *p[P]) newMessage[T any](ctx context.Context, topic string, value T) (message *Message, err error) {
-	var data []byte
-	if any(value) != nil {
-		data, err = r.b.Encoder.EncodeBytes(value)
-		if err != nil {
-			return nil, err
-		}
+	data, err := r.b.Encoder.EncodeBytes(value)
+	if err != nil {
+		return nil, err
 	}
 
 	message = new(Message{
@@ -423,6 +433,10 @@ func (r *p[P]) setupClient(ctx context.Context) error {
 	return nil
 }
 
+func (r *p[P]) Log() logger.Log {
+	return r.log
+}
+
 // Execute the scheduling loop in a synchronous blocking mode.
 //
 // if Pool.Data channel is non-nil, synchronous mode is active
@@ -454,21 +468,19 @@ func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs m
 
 	wg.Wait()
 
-	r.Mu.Lock()
-	if r.b.Exit != nil {
-		panic(signals.ErrUnsupported.Wrap(
-			"Pool.Loop() can only be called when in the stopped state",
-		))
-	}
-
-	r.b.Exit = make(chan struct{})
-	r.Mu.Unlock()
-
 	return func(yield func(Handler[P, T], error) bool) {
 		var doneCh = ctx.Done()
 		var yieldHandler = func(handler Handler[P, T], ok bool, err error) bool {
-			if ok || err != nil {
 
+			if develop.DEVELOP {
+				r.log.Printf(
+					ctx, logger.DEBUG,
+					"yielding result: (ok: %t | recvs: %d | channel: %d/%d | err: %v)",
+					ok, max(len(handler.Receivers), handler.ReceiversIter.Len), len(r.b.Data), cap(r.b.Data), err,
+				)
+			}
+
+			if ok || err != nil {
 				if errors.Is(err, ErrRetriesExceeded) {
 					return ok
 				}
@@ -485,72 +497,84 @@ func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs m
 			return true
 		}
 
-	outer:
-		for {
-			if r.b.Data == nil {
-				for res := range r.RetryCycleIter(ctx, 0, 0, subs, sigs) {
+		if r.b.Data == nil {
+			for {
+				for res := range r.RetryCycleIter(ctx, subs, sigs, CycleOptions{Flags: CF_NO_RETRY}) {
 					if !yieldHandler(res.Handler, res.ContinueLoop, res.Error) {
-						break outer
+						goto ending
 					}
 				}
-
-				continue
-			}
-
-			if !yieldHandler(r.ChanCycle(ctx, doneCh, 0, 0, subs, sigs, false)) {
-				break
 			}
 		}
+
+		for {
+			if !yieldHandler(r.ChanCycle(ctx, doneCh, subs, sigs, CycleOptions{Flags: CF_NO_RETRY})) {
+				break // same as 'goto ending'
+			}
+		}
+
+	ending:
+		// if develop.DEVELOP {
+		r.log.Printf(ctx, logger.DEBUG, "broken loop for pool %T(%s)", r.b.backref, r.b.Inst)
+		// }
 	}
 }
 
 // Cycle tries to pluck a value from the pool
-func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, tries int, subscribers map[string]*Sub[T], sigs map[string]SIGNAL, resend bool) iter.Seq2[Processor, error] {
+func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], sigs map[string]SIGNAL, opts CycleOptions) error {
 	if !r.ClientWasSetup() {
 		_, err := r.b.Client(ctx) // init lazy clients
 		if err != nil {
-			return func(yield func(Processor, error) bool) {
-				yield(nil, signals.ErrPool.WithCause(err).Wrap("error during client setup"))
-			}
+			return signals.ErrPool.WithCause(err).Wrap("error during client setup")
 		}
 	}
 
 	var iter iter.Seq[CycleResult[P, T]]
 	if r.b.Data == nil {
-		if resend {
+		if opts.Flags&CF_RESEND == CF_RESEND {
 			panic(errors.New("cannot resend data when pool is in asynchronous mode"))
 		}
 
-		iter = r.RetryCycleIter(ctx, tries, 0, subscribers, sigs)
+		iter = r.RetryCycleIter(ctx, subscribers, sigs, opts)
 	} else {
-		iter = r.ChanCycleIter(ctx, ctx.Done(), tries, 0, subscribers, sigs, resend)
+		iter = r.ChanCycleIter(ctx, ctx.Done(), subscribers, sigs, opts)
 	}
 
-	return func(yield func(Processor, error) bool) {
-		for res := range iter {
-			if res.Error != nil {
-				if errors.Is(res.Error, ErrRetriesExceeded) {
-					break
-				}
-
-				yield(res.Handler, res.Error)
+	for res := range iter {
+		if res.Error != nil {
+			if errors.Is(res.Error, ErrRetriesExceeded) {
 				break
 			}
+			return res.Error
+		}
+		if !res.ContinueLoop {
+			return ErrPoolClosed
+		}
 
-			if !res.ContinueLoop {
-				break
-			}
-
-			if !yield(res.Handler, nil) {
-				break
+		var errs []error
+		for err := range res.Handler.Process(ctx) {
+			if err != nil {
+				errs = append(errs, err)
 			}
 		}
 
+		if len(errs) > 0 {
+			return signals.Error{Val: "error(s) while executing handlers", Errors: errs}
+		}
 	}
+
+	return nil
 }
 
-func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, tries int, waitFor time.Duration, subscribers map[string]*Sub[T], signals map[string]SIGNAL) (Handler[P, T], bool, error) {
-	for res := range r.RetryCycleIter(ctx, tries, waitFor, subscribers, signals) {
+func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) (Handler[P, T], bool, error) {
+	for res := range r.RetryCycleIter(ctx, subscribers, signals, opts) {
+		return res.Handler, res.ContinueLoop, res.Error
+	}
+	return Handler[P, T]{}, false, nil
+}
+
+func (r *p[P]) ChanCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) (Handler[P, T], bool, error) {
+	for res := range r.ChanCycleIter(ctx, doneCh, subscribers, signals, opts) {
 		return res.Handler, res.ContinueLoop, res.Error
 	}
 	return Handler[P, T]{}, false, nil
@@ -568,40 +592,43 @@ type subSnapshot[VAL any, SIG PoolSignal[VAL]] struct {
 	sub   *Sub[VAL]
 }
 
-func (r *p[P]) RetryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, tries int, waitFor time.Duration, subscribers map[string]*Sub[T], signals map[string]SIGNAL) iter.Seq[CycleResult[P, T]] {
+func (r *p[P]) RetryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) iter.Seq[CycleResult[P, T]] {
 
-	r.Mu.RLock()
-
-	snapShots := make([]subSnapshot[T, SIGNAL], 0, len(subscribers))
-	for k, sub := range subscribers {
-		sig, ok := signals[k]
-		if !ok {
-			continue
-		}
-
-		snapShots = append(snapShots, subSnapshot[T, SIGNAL]{
-			topic: k,
-			sig:   sig,
-			sub:   sub,
-		})
+	if opts.WaitForNext == 0 {
+		opts.WaitForNext = DEFAULT_CYCLE_PAUSE
 	}
 
-	r.Mu.RUnlock()
-
-	if waitFor == 0 {
-		waitFor = 100 * time.Microsecond
-	}
+	retriesAfterSuccess := max(retriesAfterSuccess, opts.Tries)
 
 	return func(yield func(CycleResult[P, T]) bool) {
 		var (
-			handler    Handler[P, T]
-			failed     int
-			yieldCount int
+			handler Handler[P, T]
+			spin    spinner.Spinner
+			failed  int
+			success int
 		)
+
+		r.Mu.RLock()
+
+		snapShots := make([]subSnapshot[T, SIGNAL], 0, len(subscribers))
+		for k, sub := range subscribers {
+			sig, ok := signals[k]
+			if !ok {
+				continue
+			}
+
+			snapShots = append(snapShots, subSnapshot[T, SIGNAL]{
+				topic: k,
+				sig:   sig,
+				sub:   sub,
+			})
+		}
+
+		r.Mu.RUnlock()
 
 		for {
 
-			var ranSnapshots bool
+			var yieldedSnapshots bool
 			for _, snapshot := range snapShots {
 
 				// rebuild subscriber cache if required
@@ -622,7 +649,11 @@ func (r *p[P]) RetryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, 
 				}
 
 				if err := ctx.Err(); err != nil {
-					r.log.Printf(ctx, logger.WARN, "context error during RetryCycleIter: %v", err)
+
+					if develop.DEVELOP {
+						r.log.Printf(ctx, logger.WARN, "context error during RetryCycleIter: %v", err)
+					}
+
 					if errors.Is(err, context.Canceled) {
 						yield(CycleResult[P, T]{})
 						return
@@ -642,9 +673,11 @@ func (r *p[P]) RetryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, 
 						break receiveLoop
 					}
 
-					if err := r.log.Printf(ctx, logger.DEBUG, "message received for %q", snapshot.topic); err != nil {
-						if !yield(CycleResult[P, T]{Error: err, ContinueLoop: true}) {
-							return
+					if develop.DEVELOP {
+						if err := r.log.Printf(ctx, logger.DEBUG, "message received for %q", snapshot.topic); err != nil {
+							if !yield(CycleResult[P, T]{Error: err, ContinueLoop: true}) {
+								return
+							}
 						}
 					}
 
@@ -662,20 +695,24 @@ func (r *p[P]) RetryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, 
 					handler.BasePool = r.b
 
 					if !yield(CycleResult[P, T]{Handler: handler, ContinueLoop: true}) {
-						r.log.Println(ctx, logger.DEBUG, "loop broken")
+						if develop.DEVELOP {
+							r.log.Println(ctx, logger.DEBUG, "loop broken")
+						}
 						return
 					}
 
-					r.log.Printf(ctx, logger.DEBUG, "distributed message across %d receivers", len(handler.Receivers))
+					if develop.DEVELOP {
+						r.log.Printf(ctx, logger.DEBUG, "distributed message across %d receivers", len(handler.Receivers))
+					}
 
-					yieldCount++
-					ranSnapshots = true
+					success++
+					yieldedSnapshots = true
 				}
 			}
 
-			if ranSnapshots {
+			if yieldedSnapshots {
 				// success
-				// reset failures and yield
+				// reset failures and yield unless NoRetry is true
 				failed = 0
 				continue
 			}
@@ -684,71 +721,99 @@ func (r *p[P]) RetryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, 
 
 			// always acts as a blocking
 			// operation if it hasn't yielded any value
-			if yieldCount == 0 {
-				time.Sleep(waitFor)
+			if success == 0 {
+				spin.Spin()
 				continue
 			}
 
-			if tries == 0 && failed > 3 {
+			// above success count check ensures we have managed
+			// to receive at least a single value and currently yielded none
+			//
+			// we are asked to return.
+			if opts.Flags&CF_NO_RETRY == CF_NO_RETRY {
 				goto retriesExceeded
 			}
 
-			if tries > 0 && failed >= tries {
+			if opts.Tries == 0 && failed > retriesAfterSuccess {
 				goto retriesExceeded
 			}
 
-			time.Sleep(waitFor)
+			if opts.Tries > 0 && failed >= opts.Tries {
+				goto retriesExceeded
+			}
+
+			time.Sleep(opts.WaitForNext)
 		}
 
 	retriesExceeded:
 		yield(CycleResult[P, T]{ContinueLoop: true, Error: ErrRetriesExceeded})
+
+		//	if false {
+		//		r.RetryCycleIter(ctx, tries, waitFor, subscribers, signals)(yield)
+		//		return
+		//	}
 	}
 }
 
-func (r *p[P]) ChanCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, tries int, waitForNext time.Duration, subscribers map[string]*Sub[T], signals map[string]SIGNAL, resend bool) (Handler[P, T], bool, error) {
-	for res := range r.ChanCycleIter(ctx, doneCh, tries, waitForNext, subscribers, signals, resend) {
-		return res.Handler, res.ContinueLoop, res.Error
-	}
-	return Handler[P, T]{}, false, nil
-}
-
-func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, tries int, waitFor time.Duration, subscribers map[string]*Sub[T], signals map[string]SIGNAL, resend bool) iter.Seq[CycleResult[P, T]] {
-	if waitFor == 0 {
-		waitFor = 100 * time.Microsecond
+func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) iter.Seq[CycleResult[P, T]] {
+	if opts.WaitForNext == 0 {
+		opts.WaitForNext = DEFAULT_CYCLE_PAUSE
 	}
 
 	r.Mu.RLock()
 	exit := r.b.Exit
 	r.Mu.RUnlock()
 
+	if exit == nil {
+		panic("exit channel is nil")
+	}
+
+	if doneCh == nil {
+		panic("doneCh channel is nil")
+	}
+
+	retriesAfterSuccess := max(retriesAfterSuccess, opts.Tries)
+
 	return func(yield func(CycleResult[P, T]) bool) {
+
 		var (
 			payload          Message
 			ok               bool
 			failed, yieldCnt int
-			timer            = time.NewTimer(waitFor)
+			timer            = time.NewTimer(opts.WaitForNext)
+			closeCh          chan struct{}
+			timeoutCh        <-chan time.Time
 		)
 
-		if !timer.Stop() {
-			<-timer.C
-		}
-
 		for {
-			if yieldCnt > 0 && ((tries == 0 && failed > 3) || (tries > 0 && tries <= failed)) {
+			if yieldCnt > 0 && ((opts.Tries == 0 && failed > retriesAfterSuccess) || (opts.Tries > 0 && opts.Tries <= failed)) {
 				break
 			}
 
-			var timeoutCh <-chan time.Time
-
 			// Use the timer ONLY if we are actively draining or if tries limit is strictly > 0.
 			// If tries == 0 and we haven't got 1 message yet, timeoutCh stays nil so we block safely forever.
-			if yieldCnt > 0 || tries > 0 {
-				timer.Reset(waitFor)
+			switch {
+			case opts.Tries > 0:
+				timer.Reset(opts.WaitForNext)
 				timeoutCh = timer.C
+
+			case yieldCnt > 0 && opts.Flags&CF_NO_RETRY == CF_NO_RETRY && closeCh == nil:
+				// we are explicitly told not to retry for new values if it entails a waiting period.
+				closeCh = make(chan struct{})
+				close(closeCh)
+
+			case yieldCnt > 0:
+				timer.Reset(opts.WaitForNext)
+				timeoutCh = timer.C
+			}
+
+			if develop.DEVELOP {
+				r.log.Printf(ctx, logger.DEBUG, "waiting for result in pool %s...", r.b.Inst)
 			}
 
 			select {
 			case payload, ok = <-r.b.Data:
+
 				// Ensure timer is safely cleared since we beat it
 				if timeoutCh != nil && !timer.Stop() {
 					select {
@@ -765,6 +830,46 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 				// reset on success
 				failed = 0
 
+			case <-closeCh:
+				// go playground testing indicates order of receive
+				// is not deterministic
+				//
+				// i.e: we need to check the data channel again
+				// to be 100% sure that it does not currently old a value.
+				select {
+				case payload, ok = <-r.b.Data:
+				default:
+					goto retriesExceeded
+				}
+
+				if !ok {
+					return
+				}
+
+				yieldCnt++
+
+				// reset on success
+				failed = 0
+
+			case <-timeoutCh: // wait for ticker before counting as fail
+				// always acts as a blocking
+				// operation if it hasn't yielded any value
+				if yieldCnt == 0 {
+					continue
+				}
+
+				failed++
+
+				if opts.Tries == 0 && failed > retriesAfterSuccess {
+					goto retriesExceeded
+				}
+
+				if opts.Tries > 0 && failed >= opts.Tries {
+					goto retriesExceeded
+				}
+
+				continue
+
 			case <-exit:
 				return
 
@@ -776,28 +881,9 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 				}
 				yield(CycleResult[P, T]{Error: err})
 				return
-
-			case <-timeoutCh: // wait for ticker before counting as fail
-				// always acts as a blocking
-				// operation if it hasn't yielded any value
-				if yieldCnt == 0 {
-					continue
-				}
-
-				failed++
-
-				if tries == 0 && failed > 3 {
-					goto retriesExceeded
-				}
-
-				if tries > 0 && failed >= tries {
-					goto retriesExceeded
-				}
-
-				continue
 			}
 
-			if resend {
+			if opts.Flags&CF_RESEND == CF_RESEND {
 				r.b.Data <- payload
 				runtime.Gosched()
 			}

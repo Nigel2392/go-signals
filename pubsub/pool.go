@@ -111,8 +111,8 @@ func (r *Pool[T]) WaitLoop(ctx context.Context) iter.Seq2[Handler[*Pool[T], T], 
 	return r.P.WaitLoop(ctx, r.subscribers, r.signals)
 }
 
-func (r *Pool[T]) Cycle(ctx context.Context, tries int, resend bool) iter.Seq2[Processor, error] {
-	return r.P.Cycle(ctx, tries, r.subscribers, r.signals, resend)
+func (r *Pool[T]) Cycle(ctx context.Context, opts CycleOptions) error {
+	return r.P.Cycle(ctx, r.subscribers, r.signals, opts)
 }
 
 func (r *Pool[T]) newSub(signal string, createIfNotExists bool) (*Sub[T], bool) {

@@ -9,6 +9,8 @@ import (
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/internal/develop"
+	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
@@ -32,13 +34,14 @@ func (r *TPool[T]) Close() error {
 	return (*Pool)(r).Close()
 }
 
-func (r *TPool[T]) Cycle(ctx context.Context, tries int, resend bool) iter.Seq2[pubsub.Processor, error] {
-	return (*Pool)(r).Cycle(ctx, tries, resend)
+func (r *TPool[T]) Cycle(ctx context.Context, opts pubsub.CycleOptions) error {
+	return (*Pool)(r).Cycle(ctx, opts)
 }
 
 // custom waitloop handling, change from pubsub.Handler[any] to pubsub.Handler[T]
 func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool[T], T], error] {
 	chkTyp := reflect.TypeFor[T]()
+	chkTypStr := chkTyp.String()
 
 	return func(yield func(pubsub.Handler[*TPool[T], T], error) bool) {
 		for handler, err := range (*Pool).WaitLoop((*Pool)(r), ctx) {
@@ -61,6 +64,14 @@ func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool
 				Signal:   (*signal[T])(handler.Signal.(*wrappedSignal[T])),
 				Message:  handler.Message,
 				Value:    handler.Value.(T),
+			}
+
+			if develop.DEVELOP {
+				r.P.Log().Printf(
+					ctx, logger.DEBUG,
+					"converting handler from Handler[any] to Handler[%s] with %d receivers",
+					chkTypStr, len(handler.Receivers),
+				)
 			}
 
 			// set [pubsub.Handler.ReceiversIter] instead of [pubsub.Handler.Receivers]

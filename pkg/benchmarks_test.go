@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/internal/develop"
 	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pkg/memory"
 	"github.com/Nigel2392/go-signals/pkg/redis"
@@ -25,7 +26,9 @@ import (
 
 var totalReceivers = 32000
 
-func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
+func connectSignal[T any](t testing.TB, amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
+	t.Helper()
+
 	for i := 0; i < amount; i++ {
 		signal.Listen(context.Background(), receiverFunc)
 	}
@@ -33,9 +36,36 @@ func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc fun
 
 func drain(b testing.TB, c <-chan error) {
 	b.Helper()
+	var finished bool
+
+	if develop.DEVELOP {
+
+		if t, ok := b.(*testing.T); ok {
+
+			go func() {
+				<-time.After(5 * time.Second)
+
+				if finished {
+					return
+				}
+
+				t.Errorf("deadlock detected in test %q", t.Name())
+			}()
+		}
+	}
+
 	for err := range c {
 		b.Errorf("error from error channel: %v", err)
 	}
+
+	finished = true
+
+	if develop.DEVELOP {
+		if t, ok := b.(*testing.T); ok {
+			t.Log("channel drained")
+		}
+	}
+
 }
 
 type _pool interface {
@@ -115,6 +145,21 @@ var pools = []_pool{
 		},
 		wait: func(b testing.TB, wg *sync.WaitGroup, pool *pubsub.Pool[string]) {
 			for h, err := range pool.WaitLoop(b.Context()) {
+
+				if develop.DEVELOP {
+					if t, ok := b.(*testing.T); ok {
+
+						if ch := pool.Channel(b.Context()); cap(ch) > 0 && len(ch) > cap(ch)-3 {
+							t.Errorf(
+								"probable deadlock detected in test %q with pool channel len %d and cap %d",
+								t.Name(), len(ch), cap(ch),
+							)
+						}
+
+						t.Logf("processing handler in test %q: (handler: %t | err: %v)", t.Name(), h.BasePool == nil, err)
+					}
+				}
+
 				if errors.Is(err, io.EOF) {
 					return
 				}
@@ -127,6 +172,12 @@ var pools = []_pool{
 
 				drain(b, h.Process(b.Context()))
 				wg.Done()
+
+				if develop.DEVELOP {
+					if t, ok := b.(*testing.T); ok {
+						t.Log("processing done, waiting for next...")
+					}
+				}
 			}
 		},
 		signal: func(b testing.TB, name string, pool *pubsub.Pool[string]) signals.Signal[string] {
@@ -143,6 +194,12 @@ var pools = []_pool{
 		},
 		wait: func(b testing.TB, wg *sync.WaitGroup, pool *pubsub2.Pool) {
 			for h, err := range pool.WaitLoop(b.Context()) {
+				if develop.DEVELOP {
+					if t, ok := b.(*testing.T); ok {
+						t.Logf("processing handler in test %q: (handler: %t | err: %v)", t.Name(), h.BasePool == nil, err)
+					}
+				}
+
 				if errors.Is(err, io.EOF) {
 					return
 				}
@@ -151,6 +208,7 @@ var pools = []_pool{
 					b.Error(err)
 					return
 				}
+
 				drain(b, h.Process(b.Context()))
 				wg.Done()
 			}
@@ -169,6 +227,12 @@ var pools = []_pool{
 		},
 		wait: func(b testing.TB, wg *sync.WaitGroup, pool *pubsub2.Pool) {
 			for h, err := range pool.TPool[string]().WaitLoop(b.Context()) {
+				if develop.DEVELOP {
+					if t, ok := b.(*testing.T); ok {
+						t.Logf("processing handler in test %q: (handler: %t | err: %v)", t.Name(), h.BasePool == nil, err)
+					}
+				}
+
 				if errors.Is(err, io.EOF) {
 					return
 				}
@@ -238,7 +302,7 @@ func BenchmarkPkg(b *testing.B) {
 
 					var incr = new(atomic.Int64)
 					var signal = pool.newSignal(b, b.Name(), p)
-					connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 						incr.Add(1)
 						return nil
 					})
@@ -281,7 +345,7 @@ func BenchmarkPkg(b *testing.B) {
 
 					var incr = new(atomic.Int64)
 					var signal = pool.newSignal(b, b.Name(), p)
-					connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 						incr.Add(1)
 						return nil
 					})
@@ -294,21 +358,10 @@ func BenchmarkPkg(b *testing.B) {
 							b.Error(err)
 						}
 
-						for p, err := range p.Cycle(b.Context(), 0, false) {
-							if errors.Is(err, context.DeadlineExceeded) {
-								break
-							}
-
-							if err != nil {
-								b.Fatalf("got error %v", err)
-							}
-
-							err = p.ProcessNow(context.Background())
-							if err != nil {
-								b.Errorf("expected no error, but got %v", err)
-							}
+						if err := p.Cycle(b.Context(), pubsub.CycleOptions{Flags: pubsub.CF_NO_RETRY}); err != nil {
+							b.Errorf("expected no error, but got %v", err)
+							return
 						}
-
 					}
 
 					b.StopTimer()
@@ -335,7 +388,7 @@ func BenchmarkPkg(b *testing.B) {
 
 					var incr = new(atomic.Int64)
 					var signal = pool.newSignal(b, b.Name(), p)
-					connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 						incr.Add(1)
 						return nil
 					})
@@ -348,19 +401,9 @@ func BenchmarkPkg(b *testing.B) {
 							b.Error(err)
 						}
 
-						for p, err := range p.Cycle(b.Context(), 0, false) {
-							if errors.Is(err, context.DeadlineExceeded) {
-								break
-							}
-
-							if err != nil {
-								b.Fatalf("got error %v", err)
-							}
-
-							err = p.ProcessNow(context.Background())
-							if err != nil {
-								b.Errorf("expected no error, but got %v", err)
-							}
+						if err := p.Cycle(b.Context(), pubsub.CycleOptions{Flags: pubsub.CF_NO_RETRY}); err != nil {
+							b.Errorf("expected no error, but got %v", err)
+							return
 						}
 
 					}
@@ -394,7 +437,7 @@ func BenchmarkPkg(b *testing.B) {
 
 					var incr = new(atomic.Int64)
 					var signal = pool.newSignal(b, b.Name(), p)
-					connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 						incr.Add(1)
 						return nil
 					})
@@ -443,7 +486,7 @@ func BenchmarkPkg(b *testing.B) {
 
 					var incr = new(atomic.Int64)
 					var signal = pool.newSignal(b, b.Name(), p)
-					connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 						incr.Add(1)
 						return nil
 					})
@@ -522,7 +565,7 @@ func TestPkg(t *testing.T) {
 
 				var incr = new(atomic.Int64)
 				var signal = pool.newSignal(t, t.Name(), p)
-				connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+				connectSignal(t, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 					incr.Add(1)
 					return nil
 				})
@@ -551,31 +594,17 @@ func TestPkg(t *testing.T) {
 					t.Fatalf("Failed to execute cross-trigger: %s", err.Error())
 				}
 
-				for p, err := range p.Cycle(t.Context(), 0, false) {
-					if err != nil {
-						t.Fatalf("error during cycle: %v", err)
-					}
-
-					if err := p.ProcessNow(t.Context()); err != nil {
-						t.Fatalf("error during process: %v", err)
-					}
+				if err := p.Cycle(t.Context(), pubsub.CycleOptions{}); err != nil {
+					t.Errorf("expected no error, but got %v", err)
+					return
 				}
 
 				ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(time.Second))
 				defer cancel()
 
-				for p, err := range p.Cycle(ctx, 0, false) {
-					if err != nil && !errors.Is(err, context.DeadlineExceeded) {
-						t.Fatalf("error during cycle: %v", err)
-					}
-
-					if errors.Is(err, context.DeadlineExceeded) {
-						break
-					}
-
-					if err := p.ProcessNow(ctx); err != nil {
-						t.Fatalf("error during process: %v", err)
-					}
+				if err := p.Cycle(ctx, pubsub.CycleOptions{}); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("expected only context deadline error, but got %v", err)
+					return
 				}
 
 				// Verify both fired exactly once
@@ -589,6 +618,62 @@ func TestPkg(t *testing.T) {
 				pool.closePool(t, p)
 			})
 
+			// for _, async := range []bool{true, false} {
+			t.Run(namedTest(pool.pkgName(), client.name, "TestMaxSendMany", asyncStr(false)), func(t *testing.T) {
+				const SEND_X_TIMES = 10000
+				var (
+					incr     = new(atomic.Int64)
+					finished bool
+				)
+
+				go func() {
+					<-t.Context().Done()
+					if finished {
+						return
+					}
+
+					t.Errorf(
+						"deadlock detected in test %q, actual signals received: %d/%d",
+						t.Name(), int(incr.Load())/totalReceivers, SEND_X_TIMES,
+					)
+				}()
+
+				p := pool.newPool(
+					t,
+					client.init(t, false),
+				)
+
+				var signal = pool.newSignal(t, t.Name(), p)
+				connectSignal(t, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					incr.Add(1)
+					return nil
+				})
+
+				var wg = new(sync.WaitGroup)
+				go pool.waitLoop(t, wg, p)
+
+				wg.Add(SEND_X_TIMES)
+
+				for i := 0; i < SEND_X_TIMES; i++ {
+					err := signal.Send(t.Context(), "This is a signal message!")
+					if err != nil {
+						t.Fatalf("error during signal send: %v", err)
+					}
+				}
+
+				t.Log("waiting...")
+
+				wg.Wait()
+
+				finished = true
+
+				if int(incr.Load()) != (totalReceivers * SEND_X_TIMES) {
+					t.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * SEND_X_TIMES))
+				}
+
+				pool.closePool(t, p)
+			})
+			// }
 		}
 	}
 }

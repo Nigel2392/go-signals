@@ -228,16 +228,9 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 	}
 
 	// Trigger manual pull
-	for p, err := range pool.Cycle(context.Background(), 0, false) {
-		if err != nil {
-			t.Errorf("expected no error, but got %v", err)
-			continue
-		}
-
-		if err := p.ProcessNow(t.Context()); err != nil {
-			t.Errorf("expected no error, but got %v", err)
-			continue
-		}
+	if err := pool.Cycle(t.Context(), CycleOptions{}); err != nil {
+		t.Errorf("expected no error, but got %v", err)
+		return
 	}
 
 	select {

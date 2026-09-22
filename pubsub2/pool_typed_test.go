@@ -94,7 +94,7 @@ func BenchmarkSignalsTPool(b *testing.B) {
 	var incr = new(atomic.Int64)
 
 	var signal = pool.NewSignal(b.Context(), uuid.New().String())
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
+	connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
 		incr.Add(1)
 		return nil
 	})

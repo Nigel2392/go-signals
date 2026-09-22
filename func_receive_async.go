@@ -35,7 +35,6 @@ func AsyncReceiveIter[T any](ctx context.Context, s Signal[T], chSizeSuggestion 
 		if len(errs) > 0 {
 			errChan <- Error{Val: "error(s) while executing receivers", Errors: errs}
 		}
-
 	}()
 
 	return errChan

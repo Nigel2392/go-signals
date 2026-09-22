@@ -166,15 +166,23 @@ func (s *redisSubscriber) forward(ctx context.Context, out chan<- pubsub.Message
 			return
 		}
 
-		select {
-		case out <- pubsub.Message{
+		out <- pubsub.Message{
 			Channel: msg.Channel,
 
 			// payload is an encoded pubsub.Message!!!
-			Data: []byte(msg.Payload)}:
-		default: // out is closed
-			return
+			Data: []byte(msg.Payload),
 		}
+
+		//	select {
+		//	case out <- pubsub.Message{
+		//		Channel: msg.Channel,
+		//
+		//		// payload is an encoded pubsub.Message!!!
+		//		Data: []byte(msg.Payload)}:
+		//	default: // out is closed or full
+		//		panic(fmt.Sprintf("out closed before results were processed: %d/%d", len(out), cap(out)))
+		//		return
+		//	}
 	}
 }
 

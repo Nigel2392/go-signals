@@ -26,7 +26,7 @@ func (s *Spinner) Spin() {
 		}
 		*s++
 
-	case i <= 140:
+	default:
 		runtime.Gosched()
 		*s++
 	}

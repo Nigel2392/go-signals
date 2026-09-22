@@ -17,7 +17,8 @@ import (
 
 var totalReceivers = 32000
 
-func connectSignal[T any](amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
+func connectSignal[T any](t testing.TB, amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
+	t.Helper()
 	for i := 0; i < amount; i++ {
 		signal.Listen(context.Background(), receiverFunc)
 	}
@@ -40,7 +41,7 @@ func BenchmarkSignals(b *testing.B) {
 
 	var incr = new(atomic.Int64)
 	var signal = pool.NewSignal[*string](b.Context(), uuid.New().String())
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
+	connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
 		incr.Add(1)
 		return nil
 	})
@@ -112,7 +113,7 @@ func BenchmarkSignalsSendAsync(b *testing.B) {
 
 	var incr = new(atomic.Int64)
 	var signal = pool.NewSignal[*string](b.Context(), uuid.New().String())
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
+	connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
 		incr.Add(1)
 		return nil
 	})
@@ -241,16 +242,9 @@ func TestSignalConnectListenDisconnect(t *testing.T) {
 	}
 
 	// Trigger manual pull
-	for p, err := range pool.Cycle(context.Background(), 0, false) {
-		if err != nil {
-			t.Errorf("expected no error, but got %v", err)
-			continue
-		}
-
-		if err := p.ProcessNow(t.Context()); err != nil {
-			t.Errorf("expected no error, but got %v", err)
-			continue
-		}
+	if err := pool.Cycle(t.Context(), pubsub.CycleOptions{}); err != nil {
+		t.Errorf("expected no error, but got %v", err)
+		return
 	}
 
 	select {

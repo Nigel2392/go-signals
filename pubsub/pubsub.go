@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"runtime/debug"
+	"time"
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
@@ -38,6 +39,20 @@ type Processor interface {
 	Process(context.Context) <-chan error
 }
 
+type CycleFlag uint32
+
+const (
+	CF_INVALID CycleFlag = iota
+	CF_RESEND  CycleFlag = 1 << iota
+	CF_NO_RETRY
+)
+
+type CycleOptions struct {
+	Flags       CycleFlag
+	Tries       int
+	WaitForNext time.Duration
+}
+
 type AbstractPool interface {
 	Client(ctx context.Context) (PubSub, error)
 	Channel(ctx context.Context) chan Message
@@ -49,7 +64,7 @@ type AbstractPool interface {
 	// Cycle tries to pull a single value from the pool
 	//
 	// This is a blocking operation.
-	Cycle(ctx context.Context, tries int, resend bool) iter.Seq2[Processor, error]
+	Cycle(ctx context.Context, opts CycleOptions) error
 
 	// Stop all loops and close the pool down so no further processing can occur.
 	Close() error

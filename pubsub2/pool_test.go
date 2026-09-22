@@ -225,12 +225,8 @@ func TestPool_DecodeErrorHandling(t *testing.T) {
 	// Cycle will pop from TryReceive, try to decode, and fail
 	// calling the Process method on the handler is not required in this case,
 	// as decoding is done before processing.
-	for _, err := range pool.Cycle(context.Background(), 0, false) {
-		if err == nil {
-			t.Errorf("expected decoding error")
-			return
-		} else {
-			t.Logf("got error %v", err)
-		}
+	if err := pool.Cycle(t.Context(), pubsub.CycleOptions{}); err == nil {
+		t.Error("expected error, but got nil")
+		return
 	}
 }
