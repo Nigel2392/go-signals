@@ -54,6 +54,14 @@ func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool
 				panic(fmt.Sprintf("%s does not match required type %s", sigTyp, chkTyp))
 			}
 
+			if develop.DEVELOP {
+				r.P.Log().Printf(
+					ctx, logger.DEBUG,
+					"converting handler from Handler[any] to Handler[%s] with %d receivers",
+					chkTypStr, len(handler.Receivers),
+				)
+			}
+
 			// new handler object because the old one is of type Handler[any]
 			//
 			// pretty sure the below conversion is safe (tests pass)
@@ -64,14 +72,6 @@ func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool
 				Signal:   (*signal[T])(handler.Signal.(*wrappedSignal[T])),
 				Message:  handler.Message,
 				Value:    handler.Value.(T),
-			}
-
-			if develop.DEVELOP {
-				r.P.Log().Printf(
-					ctx, logger.DEBUG,
-					"converting handler from Handler[any] to Handler[%s] with %d receivers",
-					chkTypStr, len(handler.Receivers),
-				)
 			}
 
 			// set [pubsub.Handler.ReceiversIter] instead of [pubsub.Handler.Receivers]

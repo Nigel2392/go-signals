@@ -943,7 +943,7 @@ func TestNestedSignals_SameSignal(t *testing.T) {
 	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(5*time.Second))
 	defer cancel()
 
-	if err := pool.Cycle(ctx, pubsub.CycleOptions{Tries: 30}); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+	if err := pool.Cycle(ctx, pubsub.CycleOptions{Tries: 50, WaitForNext: time.Millisecond}); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("expected only context deadline error, but got %v", err)
 		return
 	}
