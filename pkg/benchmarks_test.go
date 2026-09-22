@@ -34,39 +34,39 @@ func connectSignal[T any](t testing.TB, amount int, signal signals.Signal[T], re
 	}
 }
 
-func drain(b testing.TB, c <-chan error) {
-	b.Helper()
-	var finished bool
-
-	if develop.DEVELOP {
-
-		if t, ok := b.(*testing.T); ok {
-
-			go func() {
-				<-time.After(5 * time.Second)
-
-				if finished {
-					return
-				}
-
-				t.Errorf("deadlock detected in test %q", t.Name())
-			}()
-		}
-	}
-
-	for err := range c {
-		b.Errorf("error from error channel: %v", err)
-	}
-
-	finished = true
-
-	if develop.DEVELOP {
-		if t, ok := b.(*testing.T); ok {
-			t.Log("channel drained")
-		}
-	}
-
-}
+//	func drain(b testing.TB, c <-chan error) {
+//		b.Helper()
+//		var finished bool
+//
+//		if develop.DEVELOP {
+//
+//			if t, ok := b.(*testing.T); ok {
+//
+//				go func() {
+//					<-time.After(5 * time.Second)
+//
+//					if finished {
+//						return
+//					}
+//
+//					t.Errorf("deadlock detected in test %q", t.Name())
+//				}()
+//			}
+//		}
+//
+//		for err := range c {
+//			b.Errorf("error from error channel: %v", err)
+//		}
+//
+//		finished = true
+//
+//		if develop.DEVELOP {
+//			if t, ok := b.(*testing.T); ok {
+//				t.Log("channel drained")
+//			}
+//		}
+//
+//	}
 
 type _pool interface {
 	pkgName() string
@@ -170,7 +170,36 @@ var pools = []_pool{
 					return
 				}
 
-				drain(b, h.Process(b.Context()))
+				var finished bool
+
+				if develop.DEVELOP {
+
+					if t, ok := b.(*testing.T); ok {
+
+						go func() {
+							<-time.After(5 * time.Second)
+
+							if finished {
+								return
+							}
+
+							t.Errorf("deadlock detected in test %q", t.Name())
+						}()
+					}
+				}
+
+				for err := range h.Process(b.Context()) {
+					b.Errorf("error from error channel: %v", err)
+				}
+
+				finished = true
+
+				if develop.DEVELOP {
+					if t, ok := b.(*testing.T); ok {
+						t.Log("channel drained")
+					}
+				}
+
 				wg.Done()
 
 				if develop.DEVELOP {
@@ -209,7 +238,36 @@ var pools = []_pool{
 					return
 				}
 
-				drain(b, h.Process(b.Context()))
+				var finished bool
+
+				if develop.DEVELOP {
+
+					if t, ok := b.(*testing.T); ok {
+
+						go func() {
+							<-time.After(5 * time.Second)
+
+							if finished {
+								return
+							}
+
+							t.Errorf("deadlock detected in test %q", t.Name())
+						}()
+					}
+				}
+
+				for err := range h.Process(b.Context()) {
+					b.Errorf("error from error channel: %v", err)
+				}
+
+				finished = true
+
+				if develop.DEVELOP {
+					if t, ok := b.(*testing.T); ok {
+						t.Log("channel drained")
+					}
+				}
+
 				wg.Done()
 			}
 		},
@@ -241,7 +299,36 @@ var pools = []_pool{
 					b.Error(err)
 					return
 				}
-				drain(b, h.Process(b.Context()))
+
+				var finished bool
+				if develop.DEVELOP {
+
+					if t, ok := b.(*testing.T); ok {
+
+						go func() {
+							<-time.After(5 * time.Second)
+
+							if finished {
+								return
+							}
+
+							t.Errorf("deadlock detected in test %q", t.Name())
+						}()
+					}
+				}
+
+				for err := range h.Process(b.Context()) {
+					b.Errorf("error from error channel: %v", err)
+				}
+
+				finished = true
+
+				if develop.DEVELOP {
+					if t, ok := b.(*testing.T); ok {
+						t.Log("channel drained")
+					}
+				}
+
 				wg.Done()
 			}
 		},

@@ -470,46 +470,38 @@ func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs m
 
 	return func(yield func(Handler[P, T], error) bool) {
 		var doneCh = ctx.Done()
-		var yieldHandler = func(handler Handler[P, T], ok bool, err error) bool {
 
-			if develop.DEVELOP {
-				r.log.Printf(
-					ctx, logger.DEBUG,
-					"yielding result: (ok: %t | recvs: %d | channel: %d/%d | err: %v)",
-					ok, max(len(handler.Receivers), handler.ReceiversIter.Len), len(r.b.Data), cap(r.b.Data), err,
-				)
+		for {
+			var iter iter.Seq[CycleResult[P, T]]
+			if r.b.Data == nil {
+				iter = r.RetryCycleIter(ctx, subs, sigs, CycleOptions{Flags: CF_NO_RETRY})
+			} else {
+				iter = r.ChanCycleIter(ctx, doneCh, subs, sigs, CycleOptions{Flags: CF_NO_RETRY})
 			}
 
-			if ok || err != nil {
-				if errors.Is(err, ErrRetriesExceeded) {
-					return ok
+			for res := range iter {
+				if develop.DEVELOP {
+					r.log.Printf(
+						ctx, logger.DEBUG,
+						"yielding result: (ok: %t | recvs: %d | channel: %d/%d | err: %v)",
+						res.ContinueLoop, max(len(res.Handler.Receivers), res.Handler.ReceiversIter.Len),
+						len(r.b.Data), cap(r.b.Data), res.Error,
+					)
 				}
 
-				if !yield(handler, err) {
-					return false
-				}
-			}
+				if res.ContinueLoop || res.Error != nil {
+					if errors.Is(res.Error, ErrRetriesExceeded) {
+						continue
+					}
 
-			if !ok {
-				return false
-			}
-
-			return true
-		}
-
-		if r.b.Data == nil {
-			for {
-				for res := range r.RetryCycleIter(ctx, subs, sigs, CycleOptions{Flags: CF_NO_RETRY}) {
-					if !yieldHandler(res.Handler, res.ContinueLoop, res.Error) {
+					if !yield(res.Handler, res.Error) {
 						goto ending
 					}
 				}
-			}
-		}
 
-		for {
-			if !yieldHandler(r.ChanCycle(ctx, doneCh, subs, sigs, CycleOptions{Flags: CF_NO_RETRY})) {
-				break // same as 'goto ending'
+				if !res.ContinueLoop {
+					goto ending
+				}
 			}
 		}
 
@@ -760,11 +752,7 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 		opts.WaitForNext = DEFAULT_CYCLE_PAUSE
 	}
 
-	r.Mu.RLock()
-	exit := r.b.Exit
-	r.Mu.RUnlock()
-
-	if exit == nil {
+	if r.b.Exit == nil {
 		panic("exit channel is nil")
 	}
 
@@ -799,6 +787,11 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 
 			case yieldCnt > 0 && opts.Flags&CF_NO_RETRY == CF_NO_RETRY && closeCh == nil:
 				// we are explicitly told not to retry for new values if it entails a waiting period.
+				//
+				// process all values currently in r.b.Data, return on the first fail encountered
+				//
+				// introducing this channel ensures we don't need to write a second (giant) select statement
+				// in an if-block (functions as 'default' block in select statement)
 				closeCh = make(chan struct{})
 				close(closeCh)
 
@@ -813,14 +806,6 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 
 			select {
 			case payload, ok = <-r.b.Data:
-
-				// Ensure timer is safely cleared since we beat it
-				if timeoutCh != nil && !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
 
 			case <-closeCh:
 				// go playground testing indicates order of receive
@@ -853,7 +838,7 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 
 				continue
 
-			case <-exit:
+			case <-r.b.Exit:
 				// first yield until empty
 				// then return on default case below
 				select {
@@ -874,6 +859,14 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 
 			if !ok {
 				return
+			}
+
+			// Ensure timer is safely cleared since we beat it
+			if timeoutCh != nil && !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
 
 			yieldCnt++
