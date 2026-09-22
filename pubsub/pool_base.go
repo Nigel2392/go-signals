@@ -821,14 +821,6 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 					default:
 					}
 				}
-				if !ok {
-					return
-				}
-
-				yieldCnt++
-
-				// reset on success
-				failed = 0
 
 			case <-closeCh:
 				// go playground testing indicates order of receive
@@ -841,15 +833,6 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 				default:
 					goto retriesExceeded
 				}
-
-				if !ok {
-					return
-				}
-
-				yieldCnt++
-
-				// reset on success
-				failed = 0
 
 			case <-timeoutCh: // wait for ticker before counting as fail
 				// always acts as a blocking
@@ -871,7 +854,13 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 				continue
 
 			case <-exit:
-				return
+				// first yield until empty
+				// then return on default case below
+				select {
+				case payload, ok = <-r.b.Data:
+				default:
+					return
+				}
 
 			case <-doneCh:
 				err := ctx.Err()
@@ -882,6 +871,15 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 				yield(CycleResult[P, T]{Error: err})
 				return
 			}
+
+			if !ok {
+				return
+			}
+
+			yieldCnt++
+
+			// reset on success
+			failed = 0
 
 			if opts.Flags&CF_RESEND == CF_RESEND {
 				r.b.Data <- payload

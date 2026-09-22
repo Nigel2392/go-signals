@@ -111,7 +111,7 @@ func TestPoolWaitLoop(t *testing.T) {
 		t.Errorf("Channel not set correctly")
 	}
 
-	sig := pool.NewSignal[string](context.Background(), "test_topic")
+	sig := pool.NewSignal[string](t.Context(), "test_topic")
 
 	receivedValue := make(chan string, 1)
 	_, err := sig.Listen(context.Background(), func(ctx context.Context, s signals.Signal[string], val string) error {
@@ -128,7 +128,7 @@ func TestPoolWaitLoop(t *testing.T) {
 	close(pool.Channel(t.Context())) // Close channel to exit the WaitLoop iter
 
 	count := 0
-	for handler, err := range pool.WaitLoop(context.Background()) {
+	for handler, err := range pool.WaitLoop(t.Context()) {
 		if err != nil {
 			t.Errorf("WaitLoop error: %v", err)
 		}

@@ -45,7 +45,7 @@ func TestTPoolWaitLoop(t *testing.T) {
 	close(pool.Channel(t.Context())) // Close channel to exit the WaitLoop iter
 
 	count := 0
-	for handler, err := range pool.WaitLoop(context.Background()) {
+	for handler, err := range pool.WaitLoop(t.Context()) {
 		if err != nil {
 			t.Errorf("WaitLoop error: %v", err)
 		}

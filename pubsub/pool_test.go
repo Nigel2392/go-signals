@@ -127,7 +127,7 @@ func TestPoolWaitLoop(t *testing.T) {
 	pool.Close()
 
 	count := 0
-	for handler, err := range pool.WaitLoop(context.Background()) {
+	for handler, err := range pool.WaitLoop(t.Context()) {
 		if err != nil {
 			t.Errorf("WaitLoop error: %v", err)
 		}
