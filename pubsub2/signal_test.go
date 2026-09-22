@@ -96,6 +96,58 @@ func BenchmarkSignals(b *testing.B) {
 	pool.Close()
 }
 
+func BenchmarkSignalsCycle(b *testing.B) {
+	b.StopTimer()
+	pool := New(
+		b.Context(),
+		func() pubsub.PubSub {
+			return NewMockPubSub(false)
+		},
+		pubsub.PoolLog(logger.Null{}),
+		pubsub.PoolClientInit(true),
+		pubsub.PoolOnError(func(ctx context.Context, p *Pool, err error) {
+			b.Log(string(debug.Stack()))
+			b.Error(err)
+		}),
+	)
+
+	var incr = new(atomic.Int64)
+	var signal = pool.NewSignal[*string](b.Context(), uuid.New().String())
+	connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
+		incr.Add(1)
+		return nil
+	})
+
+	// benchmarks can only be done with WaitLoop!
+	// this is the only way we can add waitgroups to ensure every task finished
+	// at a possible (hidden) cost of benchmark performance.
+	// hidden because we cannot consistently test [Pool.Loop] this way.
+
+	testString := new("This is a signal message!")
+
+	b.StartTimer()
+	b.ResetTimer()
+
+	b.Run("BenchCycle", func(b *testing.B) {
+		for b.Loop() {
+			err := signal.Send(b.Context(), testString)
+			if err != nil {
+				b.Error(err)
+			}
+
+			if err := pool.Cycle(b.Context(), pubsub.CycleOptions{Flags: pubsub.CF_NO_RETRY}); err != nil {
+				b.Errorf("error during cycle: %v", err)
+			}
+		}
+
+		if int(incr.Load()) != (totalReceivers * b.N) {
+			b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+		}
+	})
+
+	pool.Close()
+}
+
 func BenchmarkSignalsSendAsync(b *testing.B) {
 	b.StopTimer()
 	pool := New(

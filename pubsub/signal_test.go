@@ -30,13 +30,13 @@ func drain(b testing.TB, c <-chan error) {
 
 func BenchmarkSignals(b *testing.B) {
 
-	pool := New[string](
+	pool := New[*string](
 		b.Context(),
 		func() PubSub {
 			return NewMockPubSub(false)
 		},
 		PoolLog(logger.Null{}),
-		PoolOnError(func(ctx context.Context, p *Pool[string], err error) {
+		PoolOnError(func(ctx context.Context, p *Pool[*string], err error) {
 			b.Log(string(debug.Stack()))
 			b.Error(err)
 		}),
@@ -45,7 +45,7 @@ func BenchmarkSignals(b *testing.B) {
 	var incr = new(atomic.Int64)
 
 	var signal = pool.NewSignal(b.Context(), uuid.New().String())
-	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
 		incr.Add(1)
 		return nil
 	})
@@ -68,6 +68,7 @@ func BenchmarkSignals(b *testing.B) {
 		}
 	}()
 
+	testString := new("This is a signal message!")
 	b.StartTimer()
 	b.ResetTimer()
 
@@ -76,7 +77,7 @@ func BenchmarkSignals(b *testing.B) {
 		wg.Add(1)
 		b.StartTimer()
 
-		err := signal.Send(b.Context(), "This is a signal message!")
+		err := signal.Send(b.Context(), testString)
 		if err != nil {
 			b.Error(err)
 		}
@@ -89,6 +90,52 @@ func BenchmarkSignals(b *testing.B) {
 	if int(incr.Load()) != (totalReceivers * b.N) {
 		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
 	}
+
+	pool.Close()
+}
+
+func BenchmarkSignalsCycle(b *testing.B) {
+
+	pool := New[*string](
+		b.Context(),
+		func() PubSub {
+			return NewMockPubSub(false)
+		},
+		PoolLog(logger.Null{}),
+		PoolOnError(func(ctx context.Context, p *Pool[*string], err error) {
+			b.Log(string(debug.Stack()))
+			b.Error(err)
+		}),
+	)
+
+	var incr = new(atomic.Int64)
+
+	var signal = pool.NewSignal(b.Context(), uuid.New().String())
+	connectSignal(totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
+		incr.Add(1)
+		return nil
+	})
+
+	testString := new("This is a signal message!")
+	b.StartTimer()
+	b.ResetTimer()
+
+	b.Run("BenchCycle", func(b *testing.B) {
+		for b.Loop() {
+			err := signal.Send(b.Context(), testString)
+			if err != nil {
+				b.Error(err)
+			}
+
+			if err := pool.Cycle(b.Context(), CycleOptions{Flags: CF_NO_RETRY}); err != nil {
+				b.Errorf("error during cycle: %v", err)
+			}
+		}
+
+		if int(incr.Load()) != (totalReceivers * b.N) {
+			b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+		}
+	})
 
 	pool.Close()
 }

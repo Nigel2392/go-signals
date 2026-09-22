@@ -127,22 +127,72 @@ func BenchmarkSignalsTPool(b *testing.B) {
 	b.StartTimer()
 	b.ResetTimer()
 
-	for b.Loop() {
-		b.StopTimer()
-		wg.Add(1)
-		b.StartTimer()
+	b.Run("Plain", func(b *testing.B) {
+		for b.Loop() {
+			b.StopTimer()
+			wg.Add(1)
+			b.StartTimer()
 
-		err := signal.Send(b.Context(), testString)
-		if err != nil {
-			b.Error(err)
+			err := signal.Send(b.Context(), testString)
+			if err != nil {
+				b.Error(err)
+			}
+
+			wg.Wait()
 		}
 
-		wg.Wait()
-	}
+		if int(incr.Load()) != (totalReceivers * b.N) {
+			b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+		}
+	})
 
-	if int(incr.Load()) != (totalReceivers * b.N) {
-		b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
-	}
+	pool.Close()
+}
+
+func BenchmarkSignalsTPoolCycle(b *testing.B) {
+	b.StopTimer()
+
+	pool := New(
+		b.Context(),
+		func() pubsub.PubSub {
+			return NewMockPubSub(false)
+		},
+		pubsub.PoolLog(logger.Null{}),
+		pubsub.PoolClientInit(true),
+		pubsub.PoolOnError(func(ctx context.Context, p *Pool, err error) {
+			b.Log(string(debug.Stack()))
+			b.Error(err)
+		}),
+	).TPool[*string]()
+
+	var incr = new(atomic.Int64)
+
+	var signal = pool.NewSignal(b.Context(), uuid.New().String())
+	connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[*string], value *string) error {
+		incr.Add(1)
+		return nil
+	})
+
+	testString := new("This is a signal message!")
+	b.StartTimer()
+	b.ResetTimer()
+
+	b.Run("BenchCycle", func(b *testing.B) {
+		for b.Loop() {
+			err := signal.Send(b.Context(), testString)
+			if err != nil {
+				b.Error(err)
+			}
+
+			if err := pool.Cycle(b.Context(), pubsub.CycleOptions{Flags: pubsub.CF_NO_RETRY}); err != nil {
+				b.Errorf("error during cycle: %v", err)
+			}
+		}
+
+		if int(incr.Load()) != (totalReceivers * b.N) {
+			b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+		}
+	})
 
 	pool.Close()
 }

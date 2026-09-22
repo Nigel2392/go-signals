@@ -43,7 +43,12 @@ type CycleFlag uint32
 
 const (
 	CF_INVALID CycleFlag = iota
-	CF_RESEND  CycleFlag = 1 << iota
+
+	// resend the data across the data channel
+	CF_RESEND CycleFlag = 1 << iota
+
+	// return on the first encountered failure
+	// after having yielded at least one value.
 	CF_NO_RETRY
 )
 
