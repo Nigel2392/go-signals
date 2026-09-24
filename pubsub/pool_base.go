@@ -474,9 +474,9 @@ func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs m
 		for {
 			var iter iter.Seq[CycleResult[P, T]]
 			if r.b.Data == nil {
-				iter = r.RetryCycleIter(ctx, subs, sigs, CycleOptions{Flags: CF_NO_RETRY})
+				iter = r.retryCycleIter(ctx, subs, sigs, CycleOptions{Flags: CF_NO_RETRY})
 			} else {
-				iter = r.ChanCycleIter(ctx, doneCh, subs, sigs, CycleOptions{Flags: CF_NO_RETRY})
+				iter = r.chanCycleIter(ctx, doneCh, subs, sigs, CycleOptions{Flags: CF_NO_RETRY})
 			}
 
 			for res := range iter {
@@ -512,38 +512,24 @@ func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs m
 	}
 }
 
-// Cycle tries to pluck a value from the pool
+// Cycle tries to pluck a value from the pool as long as one is available.
+//
+// It will return after retrieving at least a single value, but will try to do it's best to drain
+// any values currently stuck in the queue.
 func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], sigs map[string]SIGNAL, opts CycleOptions) error {
-	if !r.ClientWasSetup() {
-		_, err := r.b.Client(ctx) // init lazy clients
-		if err != nil {
-			return signals.ErrPool.WithCause(err).Wrap("error during client setup")
-		}
-	}
-
-	var iter iter.Seq[CycleResult[P, T]]
-	if r.b.Data == nil {
-		if opts.Flags&CF_RESEND == CF_RESEND {
-			panic(errors.New("cannot resend data when pool is in asynchronous mode"))
-		}
-
-		iter = r.RetryCycleIter(ctx, subscribers, sigs, opts)
-	} else {
-		iter = r.ChanCycleIter(ctx, ctx.Done(), subscribers, sigs, opts)
-	}
-
-	for res := range iter {
+	var errs []error
+	for res := range r.CycleIter(ctx, subscribers, sigs, opts) {
 		if res.Error != nil {
 			if errors.Is(res.Error, ErrRetriesExceeded) {
 				break
 			}
 			return res.Error
 		}
+
 		if !res.ContinueLoop {
 			return ErrPoolClosed
 		}
 
-		var errs []error
 		for err := range res.Handler.Process(ctx) {
 			if err != nil {
 				errs = append(errs, err)
@@ -558,18 +544,35 @@ func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribe
 	return nil
 }
 
-func (r *p[P]) RetryCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) (Handler[P, T], bool, error) {
-	for res := range r.RetryCycleIter(ctx, subscribers, signals, opts) {
-		return res.Handler, res.ContinueLoop, res.Error
+// CycleIter tries to pluck as many handlers as it can based on the provided options.
+func (r *p[P]) CycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], sigs map[string]SIGNAL, opts CycleOptions) iter.Seq[CycleResult[P, T]] {
+	if !r.ClientWasSetup() {
+		_, err := r.b.Client(ctx) // init lazy clients
+		if err != nil {
+			return func(yield func(CycleResult[P, T]) bool) {
+				yield(CycleResult[P, T]{Error: signals.ErrPool.WithCause(err).Wrap("error during client setup")})
+			}
+		}
 	}
-	return Handler[P, T]{}, false, nil
-}
 
-func (r *p[P]) ChanCycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) (Handler[P, T], bool, error) {
-	for res := range r.ChanCycleIter(ctx, doneCh, subscribers, signals, opts) {
-		return res.Handler, res.ContinueLoop, res.Error
+	var iter iter.Seq[CycleResult[P, T]]
+	if r.b.Data == nil {
+		if opts.Flags&CF_RESEND == CF_RESEND {
+			panic(errors.New("cannot resend data when pool is in asynchronous mode"))
+		}
+
+		iter = r.retryCycleIter(ctx, subscribers, sigs, opts)
+	} else {
+		iter = r.chanCycleIter(ctx, ctx.Done(), subscribers, sigs, opts)
 	}
-	return Handler[P, T]{}, false, nil
+
+	return func(yield func(CycleResult[P, T]) bool) {
+		for r := range iter {
+			if !yield(r) {
+				break
+			}
+		}
+	}
 }
 
 type CycleResult[POOLTYPE AbstractPool, VALUE any] struct {
@@ -584,7 +587,7 @@ type subSnapshot[VAL any, SIG PoolSignal[VAL]] struct {
 	sub   *Sub[VAL]
 }
 
-func (r *p[P]) RetryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) iter.Seq[CycleResult[P, T]] {
+func (r *p[P]) retryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) iter.Seq[CycleResult[P, T]] {
 
 	if opts.WaitForNext == 0 {
 		opts.WaitForNext = DEFAULT_CYCLE_PAUSE
@@ -641,7 +644,7 @@ func (r *p[P]) RetryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, 
 				if err := ctx.Err(); err != nil {
 
 					if develop.DEVELOP {
-						r.log.Printf(ctx, logger.WARN, "context error during RetryCycleIter: %v", err)
+						r.log.Printf(ctx, logger.WARN, "context error during retryCycleIter: %v", err)
 					}
 
 					if errors.Is(err, context.Canceled) {
@@ -739,13 +742,13 @@ func (r *p[P]) RetryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, 
 		yield(CycleResult[P, T]{ContinueLoop: true, Error: ErrRetriesExceeded})
 
 		//	if false {
-		//		r.RetryCycleIter(ctx, tries, waitFor, subscribers, signals)(yield)
+		//		r.retryCycleIter(ctx, tries, waitFor, subscribers, signals)(yield)
 		//		return
 		//	}
 	}
 }
 
-func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) iter.Seq[CycleResult[P, T]] {
+func (r *p[P]) chanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) iter.Seq[CycleResult[P, T]] {
 	if opts.WaitForNext == 0 {
 		opts.WaitForNext = DEFAULT_CYCLE_PAUSE
 	}

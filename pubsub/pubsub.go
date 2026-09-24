@@ -50,6 +50,11 @@ const (
 	// return on the first encountered failure
 	// after having yielded at least one value.
 	CF_NO_RETRY
+
+	//	// this flag is only relevant for [p.Cycle]
+	//	// it ensures all the receivers are processed synchronously
+	//	// i.e. [Handler.ProcessNow] is called instead of [Handler.Process]
+	//	CF_PROCESS_NOW
 )
 
 type CycleOptions struct {

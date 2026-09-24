@@ -191,7 +191,7 @@ func BenchmarkSignalsTPoolCycle(b *testing.B) {
 				b.Error(err)
 			}
 
-			if err := pool.Cycle(b.Context(), pubsub.CycleOptions{Flags: pubsub.CF_NO_RETRY}); err != nil {
+			if err := pool.Cycle(b.Context(), pubsub.CycleOptions{Flags: pubsub.CF_NO_RETRY}); err != nil { // | pubsub.CF_PROCESS_NOW}); err != nil {
 				b.Errorf("error during cycle: %v", err)
 			}
 		}

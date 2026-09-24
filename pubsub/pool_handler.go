@@ -28,7 +28,7 @@ type Handler[POOLTYPE AbstractPool, T any] struct {
 // Execute the receivers with the provided value
 //
 // Returns an error, which might contain multiple joined errors.
-func (r Handler[P, T]) ProcessNow(ctx context.Context) error {
+func (r Handler[P, T]) ProcessNow(ctx context.Context) (err error) {
 	var errs []error
 	ctx = contextWithPool(ctx, r.BasePool.backref)
 	ctx = ContextWithMessage(ctx, r.Message)
@@ -36,7 +36,7 @@ func (r Handler[P, T]) ProcessNow(ctx context.Context) error {
 	if r.ReceiversIter.Receivers != nil {
 		for receiver := range r.ReceiversIter.Receivers {
 			// err := receive(ctx, s, receiver, value)
-			err := signals.Receive(ctx, r.Signal, receiver, r.Value)
+			err = signals.Receive(ctx, r.Signal, receiver, r.Value)
 			if err != nil {
 				errs = append(errs, signals.ErrReceiver.WithCause(err).Wrapf(
 					"receiver %q:", receiver.ID(),
@@ -46,7 +46,7 @@ func (r Handler[P, T]) ProcessNow(ctx context.Context) error {
 	} else {
 		for _, receiver := range r.Receivers {
 			// err := receive(ctx, s, receiver, value)
-			err := signals.Receive(ctx, r.Signal, receiver, r.Value)
+			err = signals.Receive(ctx, r.Signal, receiver, r.Value)
 			if err != nil {
 				errs = append(errs, signals.ErrReceiver.WithCause(err).Wrapf(
 					"receiver %q:", receiver.ID(),

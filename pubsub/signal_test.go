@@ -127,7 +127,7 @@ func BenchmarkSignalsCycle(b *testing.B) {
 				b.Error(err)
 			}
 
-			if err := pool.Cycle(b.Context(), CycleOptions{Flags: CF_NO_RETRY}); err != nil {
+			if err := pool.Cycle(b.Context(), CycleOptions{Flags: CF_NO_RETRY}); err != nil { // | CF_PROCESS_NOW}); err != nil {
 				b.Errorf("error during cycle: %v", err)
 			}
 		}
