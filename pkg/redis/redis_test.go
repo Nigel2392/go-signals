@@ -624,7 +624,7 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 		exitCh = make(chan struct{}, 1)
 	)
 
-	redisPool1 := pubsub2.GoNew(
+	redisPool1 := pubsub2.New(
 		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
@@ -672,7 +672,7 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 	})
 
 	// These SHOULD activate
-	redisPool2 := pubsub2.GoNew(
+	redisPool2 := pubsub2.New(
 		t.Context(),
 		PubSub(true, redis.NewClient(&redis.Options{
 			Addr: c.Addr(),
@@ -724,7 +724,12 @@ func TestMultiplePoolsSendPubsub2(t *testing.T) {
 		t.Fatalf("could not send signal: %v", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	if err := redisPool1.Cycle(t.Context(), pubsub.CycleOptions{Flags: pubsub.CF_NO_RETRY}); err != nil {
+		t.Fatalf("failed to cycle redisPool1")
+	}
+	if err := redisPool2.Cycle(t.Context(), pubsub.CycleOptions{Flags: pubsub.CF_NO_RETRY}); err != nil {
+		t.Fatalf("failed to cycle redisPool2")
+	}
 
 	mu.Lock()
 

@@ -844,6 +844,7 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 				select {
 				case payload, ok = <-r.b.Data:
 				default:
+					yield(CycleResult[P, T]{})
 					return
 				}
 
@@ -858,6 +859,7 @@ func (r *p[P]) ChanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 			}
 
 			if !ok {
+				yield(CycleResult[P, T]{})
 				return
 			}
 

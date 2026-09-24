@@ -73,6 +73,11 @@ func (s *redisPubSub) client() MinimalClient {
 	return s._client
 }
 
+func (s *redisPubSub) WithChannelOptions(opts ...redis.ChannelOption) *redisPubSub {
+	s.channelOpts = opts
+	return s
+}
+
 func (s *redisPubSub) BindChannel(ctx context.Context, b pubsub.AbstractPool) {
 	if s.publish != nil {
 		b.SetChannel(ctx, s.publish)

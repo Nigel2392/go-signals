@@ -24,8 +24,6 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-var totalReceivers = 32000
-
 func connectSignal[T any](t testing.TB, amount int, signal signals.Signal[T], receiverFunc func(ctx context.Context, signal signals.Signal[T], value T) error) {
 	t.Helper()
 
@@ -354,7 +352,7 @@ func namedTest(bench string, extra ...string) string {
 	return sb.String()
 }
 
-var receiverAmounts = []int{totalReceivers / 8, totalReceivers / 4, totalReceivers / 2, totalReceivers}
+var receiverAmounts = []int{TOTAL_AMOUNT / 8, TOTAL_AMOUNT / 4, TOTAL_AMOUNT / 2, TOTAL_AMOUNT}
 
 type benchmark struct {
 	name string
@@ -364,21 +362,21 @@ type benchmark struct {
 
 func BenchmarkPkg(b *testing.B) {
 	if !testing.Verbose() {
-		receiverAmounts = []int{totalReceivers}
+		receiverAmounts = []int{TOTAL_AMOUNT}
 	}
 
 	var tests = make([]benchmark, 0, len(clients)*len(pools)*len(receiverAmounts)*3)
 	for bench, pool := range iterTestables(b) {
-		for _, totalReceivers := range receiverAmounts {
+		for _, TOTAL_AMOUNT := range receiverAmounts {
 
 			bench := bench
 			pool := pool
-			totalReceivers := totalReceivers
+			TOTAL_AMOUNT := TOTAL_AMOUNT
 
 			tests = append(tests, benchmark{
-				name: namedTest(pool.pkgName(), bench.name, "MaxSend", strconv.Itoa(totalReceivers)),
+				name: namedTest(pool.pkgName(), bench.name, "MaxSend", strconv.Itoa(TOTAL_AMOUNT)),
 				list: []string{
-					pool.pkgName(), "MaxSend", bench.name, "1", strconv.Itoa(totalReceivers),
+					pool.pkgName(), "MaxSend", bench.name, "1", strconv.Itoa(TOTAL_AMOUNT),
 				},
 				exec: func(b *testing.B) {
 					p := pool.newPool(
@@ -389,7 +387,7 @@ func BenchmarkPkg(b *testing.B) {
 
 					var incr = new(atomic.Int64)
 					var signal = pool.newSignal(b, b.Name(), p)
-					connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					connectSignal(b, TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 						incr.Add(1)
 						return nil
 					})
@@ -410,8 +408,8 @@ func BenchmarkPkg(b *testing.B) {
 					wg.Wait()
 					b.StopTimer()
 
-					if int(incr.Load()) != (totalReceivers * b.N) {
-						b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+					if int(incr.Load()) != (TOTAL_AMOUNT * b.N) {
+						b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (TOTAL_AMOUNT * b.N))
 					}
 
 					pool.closePool(b, p)
@@ -419,9 +417,9 @@ func BenchmarkPkg(b *testing.B) {
 			})
 
 			tests = append(tests, benchmark{
-				name: namedTest(pool.pkgName(), bench.name, "Cycle", "ChanSelect", strconv.Itoa(totalReceivers)),
+				name: namedTest(pool.pkgName(), bench.name, "Cycle", "ChanSelect", strconv.Itoa(TOTAL_AMOUNT)),
 				list: []string{
-					"Cycle", "ChanSelect", pool.pkgName(), bench.name, "0", strconv.Itoa(totalReceivers),
+					"Cycle", "ChanSelect", pool.pkgName(), bench.name, "0", strconv.Itoa(TOTAL_AMOUNT),
 				},
 				exec: func(b *testing.B) {
 					p := pool.newPool(
@@ -432,7 +430,7 @@ func BenchmarkPkg(b *testing.B) {
 
 					var incr = new(atomic.Int64)
 					var signal = pool.newSignal(b, b.Name(), p)
-					connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					connectSignal(b, TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 						incr.Add(1)
 						return nil
 					})
@@ -453,8 +451,8 @@ func BenchmarkPkg(b *testing.B) {
 
 					b.StopTimer()
 
-					if int(incr.Load()) != (totalReceivers * b.N) {
-						b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+					if int(incr.Load()) != (TOTAL_AMOUNT * b.N) {
+						b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (TOTAL_AMOUNT * b.N))
 					}
 
 					pool.closePool(b, p)
@@ -462,9 +460,9 @@ func BenchmarkPkg(b *testing.B) {
 			})
 
 			tests = append(tests, benchmark{
-				name: namedTest(pool.pkgName(), bench.name, "Cycle", "TryLoop", strconv.Itoa(totalReceivers)),
+				name: namedTest(pool.pkgName(), bench.name, "Cycle", "TryLoop", strconv.Itoa(TOTAL_AMOUNT)),
 				list: []string{
-					"Cycle", "TryLoop", pool.pkgName(), bench.name, "0", strconv.Itoa(totalReceivers),
+					"Cycle", "TryLoop", pool.pkgName(), bench.name, "0", strconv.Itoa(TOTAL_AMOUNT),
 				},
 				exec: func(b *testing.B) {
 					p := pool.newPool(
@@ -475,7 +473,7 @@ func BenchmarkPkg(b *testing.B) {
 
 					var incr = new(atomic.Int64)
 					var signal = pool.newSignal(b, b.Name(), p)
-					connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					connectSignal(b, TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 						incr.Add(1)
 						return nil
 					})
@@ -497,8 +495,8 @@ func BenchmarkPkg(b *testing.B) {
 
 					b.StopTimer()
 
-					if int(incr.Load()) != (totalReceivers * b.N) {
-						b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+					if int(incr.Load()) != (TOTAL_AMOUNT * b.N) {
+						b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (TOTAL_AMOUNT * b.N))
 					}
 
 					pool.closePool(b, p)
@@ -506,9 +504,9 @@ func BenchmarkPkg(b *testing.B) {
 			})
 
 			tests = append(tests, benchmark{
-				name: namedTest(pool.pkgName(), bench.name, "MaxSend", strconv.Itoa(totalReceivers), "Parallel"),
+				name: namedTest(pool.pkgName(), bench.name, "MaxSend", strconv.Itoa(TOTAL_AMOUNT), "Parallel"),
 				list: []string{
-					pool.pkgName(), "MaxSend", bench.name, "2", strconv.Itoa(totalReceivers),
+					pool.pkgName(), "MaxSend", bench.name, "2", strconv.Itoa(TOTAL_AMOUNT),
 				},
 				exec: func(b *testing.B) {
 
@@ -524,7 +522,7 @@ func BenchmarkPkg(b *testing.B) {
 
 					var incr = new(atomic.Int64)
 					var signal = pool.newSignal(b, b.Name(), p)
-					connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					connectSignal(b, TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 						incr.Add(1)
 						return nil
 					})
@@ -549,8 +547,8 @@ func BenchmarkPkg(b *testing.B) {
 					wg.Wait()
 					b.StopTimer()
 
-					if int(incr.Load()) != (totalReceivers * b.N) {
-						b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+					if int(incr.Load()) != (TOTAL_AMOUNT * b.N) {
+						b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (TOTAL_AMOUNT * b.N))
 					}
 
 					pool.closePool(b, p)
@@ -558,9 +556,9 @@ func BenchmarkPkg(b *testing.B) {
 			})
 
 			tests = append(tests, benchmark{
-				name: namedTest(pool.pkgName(), bench.name, "RoundTrip", strconv.Itoa(totalReceivers)),
+				name: namedTest(pool.pkgName(), bench.name, "RoundTrip", strconv.Itoa(TOTAL_AMOUNT)),
 				list: []string{
-					pool.pkgName(), "RoundTrip", bench.name, "0", strconv.Itoa(totalReceivers),
+					pool.pkgName(), "RoundTrip", bench.name, "0", strconv.Itoa(TOTAL_AMOUNT),
 				},
 				exec: func(b *testing.B) {
 					b.StopTimer()
@@ -573,7 +571,7 @@ func BenchmarkPkg(b *testing.B) {
 
 					var incr = new(atomic.Int64)
 					var signal = pool.newSignal(b, b.Name(), p)
-					connectSignal(b, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+					connectSignal(b, TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 						incr.Add(1)
 						return nil
 					})
@@ -597,8 +595,8 @@ func BenchmarkPkg(b *testing.B) {
 						wg.Wait()
 					}
 
-					if int(incr.Load()) != (totalReceivers * b.N) {
-						b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * b.N))
+					if int(incr.Load()) != (TOTAL_AMOUNT * b.N) {
+						b.Fatalf("counter does not match expected: %d != %d", incr.Load(), (TOTAL_AMOUNT * b.N))
 					}
 
 					pool.closePool(b, p)
@@ -640,7 +638,7 @@ func asyncStr(b bool) string {
 
 func TestPkg(t *testing.T) {
 	if !testing.Verbose() {
-		receiverAmounts = []int{totalReceivers}
+		receiverAmounts = []int{TOTAL_AMOUNT}
 	}
 
 	for _, async := range []bool{true, false} {
@@ -652,7 +650,7 @@ func TestPkg(t *testing.T) {
 
 				var incr = new(atomic.Int64)
 				var signal = pool.newSignal(t, t.Name(), p)
-				connectSignal(t, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+				connectSignal(t, TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 					incr.Add(1)
 					return nil
 				})
@@ -706,8 +704,7 @@ func TestPkg(t *testing.T) {
 			})
 
 			// for _, async := range []bool{true, false} {
-			t.Run(namedTest(pool.pkgName(), client.name, "TestMaxSendMany", asyncStr(false)), func(t *testing.T) {
-				const SEND_X_TIMES = 10000
+			t.Run(namedTest(pool.pkgName(), client.name, "TestMaxSendMany"), func(t *testing.T) {
 				var (
 					incr     = new(atomic.Int64)
 					finished bool
@@ -721,7 +718,7 @@ func TestPkg(t *testing.T) {
 
 					t.Errorf(
 						"deadlock detected in test %q, actual signals received: %d/%d",
-						t.Name(), int(incr.Load())/totalReceivers, SEND_X_TIMES,
+						t.Name(), int(incr.Load())/TOTAL_AMOUNT, SEND_X_TIMES,
 					)
 				}()
 
@@ -731,7 +728,7 @@ func TestPkg(t *testing.T) {
 				)
 
 				var signal = pool.newSignal(t, t.Name(), p)
-				connectSignal(t, totalReceivers, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
+				connectSignal(t, TOTAL_AMOUNT, signal, func(ctx context.Context, signal signals.Signal[string], value string) error {
 					incr.Add(1)
 					return nil
 				})
@@ -754,8 +751,8 @@ func TestPkg(t *testing.T) {
 
 				finished = true
 
-				if int(incr.Load()) != (totalReceivers * SEND_X_TIMES) {
-					t.Fatalf("counter does not match expected: %d != %d", incr.Load(), (totalReceivers * SEND_X_TIMES))
+				if int(incr.Load()) != (TOTAL_AMOUNT * SEND_X_TIMES) {
+					t.Fatalf("counter does not match expected: %d != %d", incr.Load(), (TOTAL_AMOUNT * SEND_X_TIMES))
 				}
 
 				pool.closePool(t, p)
