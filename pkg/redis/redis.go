@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Nigel2392/go-signals/internal/develop"
 	"github.com/Nigel2392/go-signals/pubsub"
 	"github.com/redis/go-redis/v9"
 )
@@ -20,6 +21,8 @@ type MinimalClient interface {
 // PubSub creates a new Redis PubSub client.
 // If async is false, it allocates a channel to bind to the Pool's WaitLoop.
 func PubSub(async bool, c any, channelSize ...int) any {
+	async = develop.SyncOrAsyncBool(async)
+
 	var chanSize = 16
 	if len(channelSize) > 0 {
 		chanSize = channelSize[0]

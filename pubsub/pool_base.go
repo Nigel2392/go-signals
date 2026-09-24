@@ -634,9 +634,7 @@ func (r *p[P]) RetryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, 
 
 				// see if we should exit the loop
 				if r.b.Closed.Load() {
-					yield(CycleResult[P, T]{
-						Error: ErrPoolClosed.WithCause(errors.New("(r.Closed == true)")),
-					})
+					yield(CycleResult[P, T]{})
 					return
 				}
 

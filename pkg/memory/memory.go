@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 
+	"github.com/Nigel2392/go-signals/internal/develop"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
@@ -11,6 +12,8 @@ var _ pubsub.PubSubBinder = (*memoryPubSub)(nil)
 var _ pubsub.Subscriber = (*memorySubscriber)(nil)
 
 func PubSub(async bool, channelSize ...int) pubsub.PubSub {
+	async = develop.SyncOrAsyncBool(async)
+
 	var chanSize = 16
 	if len(channelSize) > 0 {
 		chanSize = channelSize[0]

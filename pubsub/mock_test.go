@@ -3,6 +3,8 @@ package pubsub
 import (
 	"context"
 	"sync"
+
+	"github.com/Nigel2392/go-signals/internal/develop"
 )
 
 type MockSubscriber struct {
@@ -55,6 +57,8 @@ type MockPubSub struct {
 }
 
 func NewMockPubSub(async bool) *MockPubSub {
+	async = develop.SyncOrAsyncBool(async)
+
 	var ch chan Message
 	if !async {
 		ch = make(chan Message, 100)

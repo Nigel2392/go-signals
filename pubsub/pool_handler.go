@@ -67,6 +67,11 @@ func (r Handler[P, T]) ProcessNow(ctx context.Context) error {
 // Allows for changing the value before it is sent to the receivers, as well as providing
 // a custom [context.Context] with a possible deadline
 func (r Handler[P, T]) Process(ctx context.Context) <-chan error {
+
+	if r.BasePool == nil {
+		panic("handler not properly initialized")
+	}
+
 	ctx = contextWithPool(ctx, r.BasePool.backref)
 	ctx = ContextWithMessage(ctx, r.Message)
 

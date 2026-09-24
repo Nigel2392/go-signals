@@ -11,11 +11,18 @@ import (
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/internal/develop"
 	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
 func TestTPoolWaitLoop(t *testing.T) {
+
+	if develop.AsyncEnabled {
+		t.Skip("develop.SyncEnabled is set to true, skipping...")
+		return
+	}
+
 	pool := New(t.Context(), func() pubsub.PubSub {
 		return NewMockPubSub(false)
 	}).TPool[string]()

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/internal/develop"
 	"github.com/Nigel2392/go-signals/internal/omap"
 	"github.com/Nigel2392/go-signals/pubsub"
 )
@@ -102,6 +103,12 @@ func TestPoolInternalState(t *testing.T) {
 }
 
 func TestPoolWaitLoop(t *testing.T) {
+
+	if develop.AsyncEnabled {
+		t.Skip("develop.SyncEnabled is set to true, skipping...")
+		return
+	}
+
 	client := NewMockPubSub(false)
 	pool := New(t.Context(), client)
 
