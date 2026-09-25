@@ -3,15 +3,15 @@ module github.com/Nigel2392/go-signals
 go 1.27.0
 
 require (
-	github.com/Nigel2392/errors v1.0.2
+	github.com/Nigel2392/errors v1.0.3
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/google/uuid v1.6.0
-	github.com/pkg/errors v0.9.1
 	github.com/redis/go-redis/v9 v9.22.0
 )
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/stretchr/testify v1.7.1 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect

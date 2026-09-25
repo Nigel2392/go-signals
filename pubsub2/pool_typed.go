@@ -26,7 +26,7 @@ func (r *TPool[T]) Pool() *Pool {
 	return (*Pool)(r)
 }
 
-// [pubsub.PubSubPool]
+// [pubsub.AbstractPool]
 func (r *TPool[T]) ID() uuid.UUID {
 	return (*Pool)(r).ID()
 }
@@ -38,6 +38,7 @@ func (r *TPool[T]) Cycle(ctx context.Context, opts pubsub.CycleOptions) error {
 	return (*Pool)(r).Cycle(ctx, opts)
 }
 
+// [pubsub.PubSubPool]
 // custom waitloop handling, change from pubsub.Handler[any] to pubsub.Handler[T]
 func (r *TPool[T]) WaitLoop(ctx context.Context) iter.Seq2[pubsub.Handler[*TPool[T], T], error] {
 	chkTyp := reflect.TypeFor[T]()

@@ -8,10 +8,11 @@ import (
 const (
 	CodeRetriesExceeded errors.GoCode = "RetriesExceeded"
 	CodeContextError    errors.GoCode = "ContextError"
+	CodePoolClosed      errors.GoCode = "PoolClosed"
 )
 
 var (
-	ErrPoolClosed      = signals.ErrPool.Wrap("pool is closed")
+	ErrPoolClosed      = errors.New(CodePoolClosed, "pool is closed", signals.ErrPool)
 	ErrContext         = errors.New(CodeContextError, "error originated from context", ErrPoolClosed)
 	ErrRetriesExceeded = errors.New(CodeRetriesExceeded, "retry count exceeded")
 )

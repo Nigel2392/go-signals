@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
-	"log"
 	"os"
 	"reflect"
 	"runtime/debug"
@@ -13,6 +12,7 @@ import (
 	"uuid"
 
 	"github.com/Nigel2392/go-signals"
+	"github.com/Nigel2392/go-signals/internal/develop"
 	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
 )
@@ -207,7 +207,7 @@ func GoLoop[POOLTYPE waitPool[HANDLER, POOLTYPE], HANDLER Processor](ctx context
 				} else {
 					err = fmt.Errorf("[%T.Loop] panic recovered: %v: %s", pool, p, string(debug.Stack()))
 				}
-				log.Println(err)
+				pool.p().log.Println(ctx, logger.ERROR, err)
 			}
 
 			pool.p().log.Printf(ctx, logger.WARN, "stopped after processing %d signals", *ct)
@@ -215,14 +215,22 @@ func GoLoop[POOLTYPE waitPool[HANDLER, POOLTYPE], HANDLER Processor](ctx context
 
 		for h, err := range pool.WaitLoop(ctx) {
 			if err != nil {
+				if drain {
+					if develop.DEVELOP {
+						pool.p().log.Printf(ctx, logger.WARN, "error during receiver fetch: %v", err)
+					}
+					continue
+				}
+
 				errCh <- err
 				continue
 			}
 
 			for err := range h.Process(ctx) {
-
 				if drain {
-					log.Printf("error during receiver processing: %v", err)
+					if develop.DEVELOP {
+						pool.p().log.Printf(ctx, logger.WARN, "error during receiver processing: %v", err)
+					}
 				} else {
 					errCh <- err
 				}

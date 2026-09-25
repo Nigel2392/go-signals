@@ -114,11 +114,11 @@ func (m *GPool) RangeT[T any](f func(value Signal[T]) (_continue bool)) {
 func (m *GPool) Send[T any](ctx context.Context, name string, value T) error {
 	var signal, ok = m.load[T](name)
 	if !ok {
-		return ErrPool.WithCause(Err("signal not found"))
+		return ErrSignalNotFound
 	}
 	err := signal.Send(ctx, value)
 	if err != nil {
-		return ErrPool.WithCause(err)
+		return PoolError(err, "Send")
 	}
 
 	return nil
@@ -133,7 +133,10 @@ func (m *GPool) SendGlobal[T any](ctx context.Context, value T) error {
 		err = sig.Send(ctx, value)
 		return err == nil
 	})
-	return err
+	if err != nil {
+		return PoolError(err, "SendGlobal")
+	}
+	return nil
 }
 
 func (m *GPool) NewSignal[T any](ctx context.Context, name string) Signal[T] {

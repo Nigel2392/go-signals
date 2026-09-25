@@ -23,7 +23,7 @@ type MinimalClient interface {
 func PubSub(async bool, c any, channelSize ...int) any {
 	async = develop.SyncOrAsyncBool(async)
 
-	var chanSize = 16
+	var chanSize = 128
 	if len(channelSize) > 0 {
 		chanSize = channelSize[0]
 	}
@@ -118,7 +118,7 @@ func (s *redisPubSub) Subscribe(ctx context.Context, topic string) (pubsub.Subsc
 	// If we are in synchronous mode, forward messages to the centralized channel.
 	// synchronous means the pool loop is blocking, instead of in a goroutine.
 	if s.publish != nil {
-		go sub.forward(ctx, s.publish)
+		go sub.forward(ctx.Done(), s.publish)
 		// } else {
 		// sub.ch = ps.Channel(s.channelOpts...)
 	}
@@ -150,7 +150,7 @@ type redisSubscriber struct {
 //		}
 //	}
 
-func (s *redisSubscriber) forward(ctx context.Context, out chan<- pubsub.Message) {
+func (s *redisSubscriber) forward(doneCh <-chan struct{}, out chan<- pubsub.Message) {
 	// Blocks until a message arrives.
 	// Automatically breaks and exits when r.pubsub.Close() is called.
 	var (
@@ -170,7 +170,7 @@ func (s *redisSubscriber) forward(ctx context.Context, out chan<- pubsub.Message
 				return
 			}
 
-		case <-ctx.Done():
+		case <-doneCh:
 			return
 		}
 

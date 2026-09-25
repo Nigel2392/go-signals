@@ -107,7 +107,7 @@ func (r *receiver[T]) Receive(ctx context.Context, s signals.Signal[T], val T) e
 // Disconnects the receiver from the signal.
 func (r *receiver[T]) Disconnect(ctx context.Context) error {
 	if r.sig == nil {
-		return signals.Err("receiver is not connected to a signal")
+		return signals.ErrReceiver.Wrap("receiver is not connected to a signal")
 	}
 	r.sig.Disconnect(ctx, r)
 	r.sig = nil

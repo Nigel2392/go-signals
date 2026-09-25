@@ -79,9 +79,7 @@ func (s *signal[T]) Connect(ctx context.Context, recv ...signals.Receiver[T]) er
 	for _, r := range recv {
 		err := r.Bind(ctx, s)
 		if err != nil {
-			return signals.ErrReceiver.WithCause(err).Wrapf(
-				"receiver %q", r.ID(),
-			)
+			return signals.ReceiverError(r, err)
 		}
 
 		err = s.pool.connect(ctx, s.name, r)
@@ -126,21 +124,25 @@ type poolReceiver[T any] struct {
 }
 
 // Receives the signal and value from the signal.
-func (p *poolReceiver[T]) Receive(ctx context.Context, s signals.Signal[T], v T) error {
-	return signals.ErrPool.WithCause(p.s.pool.Send(ctx, p.s.name, v))
+func (p *poolReceiver[T]) Receive(ctx context.Context, s signals.Signal[T], v T) (err error) {
+	err = p.s.pool.Send(ctx, p.s.name, v)
+	if err != nil {
+		return signals.PoolError(err, "poolReceiver.Receive")
+	}
+	return nil
 }
 
 // Disconnects the receiver from the signal.
 func (p *poolReceiver[T]) Disconnect(ctx context.Context) error {
 	return signals.ErrPool.WithCause(
-		signals.ErrReceiver.Wrapf("%T cannot be disconnected", p),
+		signals.ErrUnsupported.Wrapf("%T cannot be disconnected", p),
 	)
 }
 
 // Sets the signal on the receiver instance for later use.
 func (p *poolReceiver[T]) Bind(ctx context.Context, s signals.Signal[T]) error {
 	return signals.ErrPool.WithCause(
-		signals.ErrReceiver.Wrapf("%T cannot be rebound", p),
+		signals.ErrUnsupported.Wrapf("%T cannot be rebound", p),
 	)
 }
 

@@ -7,14 +7,16 @@ import (
 	"github.com/Nigel2392/go-signals/pubsub"
 )
 
-var _ pubsub.PubSub = (*memoryPubSub)(nil)
-var _ pubsub.PubSubBinder = (*memoryPubSub)(nil)
-var _ pubsub.Subscriber = (*memorySubscriber)(nil)
+var (
+	_ pubsub.PubSub       = (*memoryPubSub)(nil)
+	_ pubsub.PubSubBinder = (*memoryPubSub)(nil)
+	_ pubsub.Subscriber   = (*memorySubscriber)(nil)
+)
 
 func PubSub(async bool, channelSize ...int) pubsub.PubSub {
 	async = develop.SyncOrAsyncBool(async)
 
-	var chanSize = 16
+	var chanSize = 128
 	if len(channelSize) > 0 {
 		chanSize = channelSize[0]
 	}

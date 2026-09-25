@@ -75,7 +75,11 @@ func BenchmarkSignals(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			drain(b, h.Process(b.Context()))
+
+			for err := range h.Process(b.Context()) {
+				b.Errorf("error from error channel: %v", err)
+			}
+
 			wg.Done()
 		}
 	}()

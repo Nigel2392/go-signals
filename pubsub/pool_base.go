@@ -13,12 +13,12 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/Nigel2392/errors"
 	"github.com/Nigel2392/go-signals"
 	"github.com/Nigel2392/go-signals/internal/develop"
 	"github.com/Nigel2392/go-signals/internal/spinner"
 	"github.com/Nigel2392/go-signals/pkg/logger"
 	"github.com/Nigel2392/go-signals/pubsub/encoder"
-	"github.com/pkg/errors"
 )
 
 var (
@@ -472,7 +472,7 @@ func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs m
 		var doneCh = ctx.Done()
 
 		for {
-			var iter iter.Seq[CycleResult[P, T]]
+			var iter CycleResultSeq[P, T]
 			if r.b.Data == nil {
 				iter = r.retryCycleIter(ctx, subs, sigs, CycleOptions{Flags: CF_NO_RETRY})
 			} else {
@@ -512,6 +512,31 @@ func (r *p[P]) WaitLoop[T any, SIGNAL PoolSignal[T]](ctx context.Context, subs m
 	}
 }
 
+type CycleResultSeq[P AbstractPool, T any] iter.Seq[CycleResult[P, T]]
+
+func (i CycleResultSeq[P, T]) ProcessorSeq2(yield func(Processor, error) bool) {
+	for res := range i {
+		if res.Error != nil {
+			if errors.Is(res.Error, ErrRetriesExceeded) {
+				break
+			}
+
+			if !yield(res.Handler, res.Error) {
+				break
+			}
+		}
+
+		if !res.ContinueLoop {
+			yield(res.Handler, ErrPoolClosed)
+			break
+		}
+
+		if !yield(res.Handler, nil) {
+			break
+		}
+	}
+}
+
 // Cycle tries to pluck a value from the pool as long as one is available.
 //
 // It will return after retrieving at least a single value, but will try to do it's best to drain
@@ -537,15 +562,63 @@ func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribe
 		}
 
 		if len(errs) > 0 {
-			return signals.Error{Val: "error(s) while executing handlers", Errors: errs}
+			return errors.Error{Message: "error(s) while executing handlers", Related: errs}
 		}
 	}
 
 	return nil
 }
 
+//	// Cycle tries to pluck a value from the pool as long as one is available.
+//	//
+//	// It will return after retrieving at least a single value, but will try to do it's best to drain
+//	// any values currently stuck in the queue.
+//	func (r *p[P]) Cycle[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], sigs map[string]SIGNAL, opts CycleOptions) error {
+//		var errs []error
+//
+//		ctx = contextWithPool(ctx, r.b.backref)
+//
+//		for res := range r.CycleIter(ctx, subscribers, sigs, opts) {
+//			if res.Error != nil {
+//				if errors.Is(res.Error, ErrRetriesExceeded) {
+//					break
+//				}
+//				return res.Error
+//			}
+//
+//			if !res.ContinueLoop {
+//				return ErrPoolClosed
+//			}
+//
+//			if res.Handler.ReceiversIter.Receivers != nil {
+//				for err := range signals.AsyncReceiveIter(
+//					ContextWithMessage(ctx, res.Handler.Message), res.Handler.Signal,
+//					res.Handler.ReceiversIter.Len,
+//					res.Handler.ReceiversIter.Receivers,
+//					res.Handler.Value,
+//				) {
+//					if err != nil {
+//						errs = append(errs, err)
+//					}
+//				}
+//			} else {
+//				for err := range signals.AsyncReceive(ContextWithMessage(ctx, res.Handler.Message), res.Handler.Signal, res.Handler.Receivers, res.Handler.Value) {
+//					if err != nil {
+//						errs = append(errs, err)
+//					}
+//				}
+//			}
+//
+//			if len(errs) > 0 {
+//				return errors.Error{Message: "error(s) while executing handlers", Related: errs}
+//			}
+//		}
+//
+//		return nil
+//	}
+
 // CycleIter tries to pluck as many handlers as it can based on the provided options.
-func (r *p[P]) CycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], sigs map[string]SIGNAL, opts CycleOptions) iter.Seq[CycleResult[P, T]] {
+func (r *p[P]) CycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], sigs map[string]SIGNAL, opts CycleOptions) CycleResultSeq[P, T] {
 	if !r.ClientWasSetup() {
 		_, err := r.b.Client(ctx) // init lazy clients
 		if err != nil {
@@ -555,28 +628,19 @@ func (r *p[P]) CycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, subsc
 		}
 	}
 
-	var iter iter.Seq[CycleResult[P, T]]
 	if r.b.Data == nil {
 		if opts.Flags&CF_RESEND == CF_RESEND {
-			panic(errors.New("cannot resend data when pool is in asynchronous mode"))
+			panic(errors.New(signals.CodePoolError, "cannot resend data when pool is in asynchronous mode"))
 		}
 
-		iter = r.retryCycleIter(ctx, subscribers, sigs, opts)
+		return r.retryCycleIter(ctx, subscribers, sigs, opts)
 	} else {
-		iter = r.chanCycleIter(ctx, ctx.Done(), subscribers, sigs, opts)
-	}
-
-	return func(yield func(CycleResult[P, T]) bool) {
-		for r := range iter {
-			if !yield(r) {
-				break
-			}
-		}
+		return r.chanCycleIter(ctx, ctx.Done(), subscribers, sigs, opts)
 	}
 }
 
 type CycleResult[POOLTYPE AbstractPool, VALUE any] struct {
-	Handler      Handler[POOLTYPE, VALUE]
+	Handler[POOLTYPE, VALUE]
 	Error        error
 	ContinueLoop bool
 }
@@ -587,7 +651,7 @@ type subSnapshot[VAL any, SIG PoolSignal[VAL]] struct {
 	sub   *Sub[VAL]
 }
 
-func (r *p[P]) retryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) iter.Seq[CycleResult[P, T]] {
+func (r *p[P]) retryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) CycleResultSeq[P, T] {
 
 	if opts.WaitForNext == 0 {
 		opts.WaitForNext = DEFAULT_CYCLE_PAUSE
@@ -714,6 +778,7 @@ func (r *p[P]) retryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, 
 
 			// always acts as a blocking
 			// operation if it hasn't yielded any value
+			// but do so without yielding to the OS
 			if success == 0 {
 				spin.Spin()
 				continue
@@ -748,7 +813,7 @@ func (r *p[P]) retryCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, 
 	}
 }
 
-func (r *p[P]) chanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) iter.Seq[CycleResult[P, T]] {
+func (r *p[P]) chanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, doneCh <-chan struct{}, subscribers map[string]*Sub[T], signals map[string]SIGNAL, opts CycleOptions) CycleResultSeq[P, T] {
 	if opts.WaitForNext == 0 {
 		opts.WaitForNext = DEFAULT_CYCLE_PAUSE
 	}
@@ -934,13 +999,12 @@ func (r *p[P]) chanCycleIter[T any, SIGNAL PoolSignal[T]](ctx context.Context, d
 
 			if !yield(CycleResult[P, T]{
 				ContinueLoop: true,
-				Handler: Handler[P, T]{
-					Value:     val,
-					Signal:    sig,
-					Receivers: sub.cached,
-					Message:   message,
-					BasePool:  r.b,
-				}},
+				Value:        val,
+				Signal:       sig,
+				Receivers:    sub.cached,
+				Message:      message,
+				BasePool:     r.b,
+			},
 			) {
 				return
 			}

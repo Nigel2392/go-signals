@@ -6,6 +6,8 @@ package signals
 import (
 	"context"
 	"iter"
+
+	"github.com/Nigel2392/errors"
 )
 
 const BATCHES = false
@@ -26,14 +28,12 @@ func AsyncReceiveIter[T any](ctx context.Context, s Signal[T], chSizeSuggestion 
 			// err := receive(ctx, s, receiver, val)
 			err := Receive(ctx, s, receiver, val)
 			if err != nil {
-				errs = append(errs, ErrReceiver.WithCause(err).Wrapf(
-					"Receiver(%s)", receiver.ID(),
-				))
+				errs = append(errs, ReceiverError(receiver, err))
 			}
 		}
 
 		if len(errs) > 0 {
-			errChan <- Error{Val: "error(s) while executing receivers", Errors: errs}
+			errChan <- errors.Error{Message: "error(s) while executing receivers", Related: errs}
 		}
 	}()
 
@@ -56,14 +56,12 @@ func AsyncReceive[T any](ctx context.Context, s Signal[T], recvs []Receiver[T], 
 			// err := receive(ctx, s, receiver, value)
 			err := Receive(ctx, s, receiver, value)
 			if err != nil {
-				errs = append(errs, ErrReceiver.WithCause(err).Wrapf(
-					"Receiver(%s)", receiver.ID(),
-				))
+				errs = append(errs, ReceiverError(receiver, err))
 			}
 		}
 
 		if len(errs) > 0 {
-			errChan <- Error{Val: "error(s) while executing receivers", Errors: errs}
+			errChan <- errors.Error{Message: "error(s) while executing receivers", Related: errs}
 		}
 	}()
 

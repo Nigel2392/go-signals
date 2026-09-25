@@ -1,8 +1,6 @@
 package signals
 
 import (
-	"strings"
-
 	"github.com/Nigel2392/errors"
 )
 
@@ -18,50 +16,43 @@ var (
 	ErrSignal      = errors.New(CodeSignalError, "signal error")
 	ErrReceiver    = errors.New(CodeReceiverError, "receiver error")
 	ErrUnsupported = errors.New(CodeNotSupported, "operation not supported")
+
+	ErrSignalNotFound errors.AbstractError[errors.Error] = ErrSignal.Wrap("signal not found")
+	ErrNoReceivers    errors.AbstractError[errors.Error] = ErrSignal.Wrap("did not provide any receivers to disconnect")
 )
 
-func SignalError(e error) (Error, bool) {
+func SignalError(e error) (errors.Error, bool) {
 	switch e := e.(type) {
-	case Error:
+	case errors.Error:
 		return e, true
+
 	default:
-		var t = new(Error)
-		if errors.As(e, t) {
-			return *t, true
+		var t errors.Error
+		if errors.As(e, &t) {
+			return t, true
 		}
 
-		return Error{Val: e.Error()}, false
+		return errors.Error{Code: errors.CodeUnknown, Reason: e}, false
 	}
 }
 
-func Err(val string, errors ...error) error {
-	return Error{Val: val, Errors: errors}
+type receiverIdType interface {
+	// Return the unique ID of the receiver.
+	ID() string
 }
 
-// Error type for signals.
-type Error struct {
-	Val    string
-	Errors []error
-}
-
-func (e Error) Error() string {
-	var b = new(strings.Builder)
-	b.WriteString(e.Val)
-	b.WriteString(" (")
-	for i, err := range e.Errors {
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(err.Error())
+func ReceiverError[RECEIVER receiverIdType](recv RECEIVER, cause error) error {
+	return errors.Error{
+		Code:    CodeReceiverError,
+		Reason:  cause,
+		Message: recv.ID(),
 	}
-	b.WriteString(")")
-	return b.String()
 }
 
-func (e Error) Len() int {
-	return len(e.Errors)
-}
-
-func (e Error) Unwrap() []error {
-	return e.Errors
+func PoolError(cause error, where string) error {
+	return errors.Error{
+		Code:    CodePoolError,
+		Reason:  cause,
+		Message: where,
+	}
 }

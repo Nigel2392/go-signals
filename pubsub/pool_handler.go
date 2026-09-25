@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 
+	"github.com/Nigel2392/errors"
 	"github.com/Nigel2392/go-signals"
 )
 
@@ -38,9 +39,7 @@ func (r Handler[P, T]) ProcessNow(ctx context.Context) (err error) {
 			// err := receive(ctx, s, receiver, value)
 			err = signals.Receive(ctx, r.Signal, receiver, r.Value)
 			if err != nil {
-				errs = append(errs, signals.ErrReceiver.WithCause(err).Wrapf(
-					"receiver %q:", receiver.ID(),
-				))
+				errs = append(errs, signals.ReceiverError(receiver, err))
 			}
 		}
 	} else {
@@ -48,15 +47,13 @@ func (r Handler[P, T]) ProcessNow(ctx context.Context) (err error) {
 			// err := receive(ctx, s, receiver, value)
 			err = signals.Receive(ctx, r.Signal, receiver, r.Value)
 			if err != nil {
-				errs = append(errs, signals.ErrReceiver.WithCause(err).Wrapf(
-					"receiver %q:", receiver.ID(),
-				))
+				errs = append(errs, signals.ReceiverError(receiver, err))
 			}
 		}
 	}
 
 	if len(errs) > 0 {
-		return signals.Error{Val: "error(s) while executing receivers", Errors: errs}
+		return errors.Error{Message: "error(s) while executing receivers", Related: errs}
 	}
 
 	return nil

@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+
+	"github.com/Nigel2392/errors"
 )
 
 func init() {
@@ -229,14 +231,12 @@ func processBatchPool[T any](ctx context.Context, wg *sync.WaitGroup, errChan ch
 			if errs == nil {
 				errs = make([]error, 0, 4)
 			}
-			errs = append(errs, ErrReceiver.WithCause(err).Wrapf(
-				"Receiver(%s)", receiver.ID(),
-			))
+			errs = append(errs, ReceiverError(receiver, err))
 		}
 	}
 
 	if len(errs) > 0 {
-		errChan <- Error{Val: "error(s) while executing receivers", Errors: errs}
+		errChan <- errors.Error{Message: "error(s) while executing receivers", Related: errs}
 	}
 }
 
@@ -250,14 +250,12 @@ func processBatch[T any](ctx context.Context, wg *sync.WaitGroup, errChan chan<-
 			if errs == nil {
 				errs = make([]error, 0, 4)
 			}
-			errs = append(errs, ErrReceiver.WithCause(err).Wrapf(
-				"Receiver(%s)", receiver.ID(),
-			))
+			errs = append(errs, ReceiverError(receiver, err))
 		}
 	}
 
 	if len(errs) > 0 {
-		errChan <- Error{Val: "error(s) while executing receivers", Errors: errs}
+		errChan <- errors.Error{Message: "error(s) while executing receivers", Related: errs}
 	}
 }
 

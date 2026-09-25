@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+
+	"github.com/Nigel2392/errors"
 )
 
 var (
@@ -79,18 +81,19 @@ func (s *signal[T]) Send(ctx context.Context, value T) error {
 	for _, receiver := range recvs {
 		err = Receive(ctx, s, receiver, value)
 		if err != nil {
-			errs = append(errs, ErrReceiver.WithCause(err).Wrapf(
-				"Receiver(%s)", receiver.ID(),
-			))
+			errs = append(errs, ReceiverError(receiver, err))
 		}
 	}
 
 	// Return an error if any of the receivers returned an error.
 	if len(errs) > 0 {
-		return ErrSignal.WithCause(Err(fmt.Sprintf(
-			"error sending signal to %d receivers",
-			len(errs)), errs...,
-		))
+		return errors.Error{
+			Code: CodeSignalError,
+			Message: fmt.Sprintf(
+				"error sending signal to %d receivers",
+				len(errs)),
+			Related: errs,
+		}
 	}
 
 	return nil
@@ -102,9 +105,7 @@ func (s *signal[T]) Connect(ctx context.Context, receivers ...Receiver[T]) error
 	for _, receiver := range receivers {
 		err := receiver.Bind(ctx, s)
 		if err != nil {
-			return ErrReceiver.WithCause(err).Wrapf(
-				"receiver %q:", receiver.ID(),
-			)
+			return ReceiverError(receiver, err)
 		}
 	}
 
@@ -126,9 +127,7 @@ func (s *signal[T]) Connect(ctx context.Context, receivers ...Receiver[T]) error
 func (s *signal[T]) Disconnect(ctx context.Context, other ...Receiver[T]) error {
 	// Validate if any receivers have been connected.
 	if len(other) == 0 {
-		return ErrReceiver.WithCause(
-			Err("did not provide any receivers to disconnect"),
-		)
+		return ErrNoReceivers
 	}
 
 	// manual lock management instead of defers
@@ -153,9 +152,7 @@ func (s *signal[T]) Disconnect(ctx context.Context, other ...Receiver[T]) error 
 		}
 
 		if err := recv.Disconnect(ctx); err != nil {
-			return ErrReceiver.WithCause(err).Wrapf(
-				"receiver %q:", recv.ID(),
-			)
+			return ReceiverError(recv, err)
 		}
 	}
 
@@ -179,9 +176,7 @@ func (s *signal[T]) Clear(ctx context.Context) error {
 	for _, receiver := range recvs {
 		err := receiver.Disconnect(ctx)
 		if err != nil {
-			return ErrReceiver.WithCause(err).Wrapf(
-				"receiver %q:", receiver.ID(),
-			)
+			return ReceiverError(receiver, err)
 		}
 	}
 

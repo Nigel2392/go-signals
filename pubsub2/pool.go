@@ -121,6 +121,11 @@ func (r *Pool) Cycle(ctx context.Context, opts pubsub.CycleOptions) error {
 	return r.P.Cycle(ctx, r.subscribers, r.signals, opts)
 }
 
+// CycleIter tries to pluck and yield as many handlers as it can based on the provided options.
+func (r *Pool) CycleIter(ctx context.Context, opts pubsub.CycleOptions) iter.Seq2[pubsub.Processor, error] {
+	return r.P.CycleIter(ctx, r.subscribers, r.signals, opts).ProcessorSeq2
+}
+
 func (r *Pool) newSub(signal string, createIfNotExists bool) (*pubsub.Sub[any], bool) {
 	s, ok := r.subscribers[signal]
 	if ok {
@@ -176,13 +181,10 @@ func (r *Pool) clear(ctx context.Context, signal string) error {
 		return nil
 	}
 
-	for idx, recv := range sub.Receivers.List() {
-		id := recv.ID()
+	for _, recv := range sub.Receivers.List() {
 		err := recv.Disconnect(ctx)
 		if err != nil {
-			return signals.ErrReceiver.WithCause(err).Wrapf(
-				"[%d] receiver %q", idx, id,
-			)
+			return signals.ReceiverError(recv, err)
 		}
 	}
 

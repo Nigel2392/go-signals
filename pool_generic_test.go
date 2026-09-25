@@ -342,7 +342,7 @@ func TestGSendAsync(t *testing.T) {
 		t.Fatalf("Expected to retrieve Error, got %T", errs[0])
 	}
 
-	if len(err.Errors) != expectedInner {
+	if len(err.Related) != expectedInner {
 		t.Fatalf("Expected %d errors, got %d", expectedInner, len(errs))
 	}
 }
@@ -356,10 +356,10 @@ func TestGManyRecv(t *testing.T) {
 
 	if err != nil {
 		if e, ok := SignalError(err); ok {
-			if e.Len() != totalReceivers {
-				t.Errorf("Expected %d errors, got %d", totalReceivers, e.Len())
+			if len(e.Related) != totalReceivers {
+				t.Errorf("Expected %d errors, got %d", totalReceivers, len(e.Related))
 			} else {
-				t.Logf("Received %d errors", e.Len())
+				t.Logf("Received %d errors", len(e.Related))
 			}
 		} else {
 			t.Errorf("Expected a signal error, got %s", e.Error())

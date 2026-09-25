@@ -27,9 +27,7 @@ func (s *signal[T]) Connect(ctx context.Context, recv ...signals.Receiver[T]) er
 	for _, r := range recv {
 		err := r.Bind(ctx, s)
 		if err != nil {
-			return signals.ErrReceiver.WithCause(err).Wrapf(
-				"receiver %q", r.ID(),
-			)
+			return signals.ReceiverError(r, err)
 		}
 
 		err = s.pool.connect(ctx, s.name, r)
@@ -52,7 +50,7 @@ func (s *signal[T]) Disconnect(ctx context.Context, recv ...signals.Receiver[T])
 	for _, r := range recv {
 		err := s.pool.disconnect(ctx, s, r)
 		if err != nil {
-			return err
+			return signals.ReceiverError(r, err)
 		}
 	}
 	return nil
