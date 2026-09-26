@@ -71,9 +71,13 @@ type AbstractPool interface {
 	// The instance ID of the pool
 	ID() uuid.UUID
 
-	// Cycle tries to pull a single value from the pool
+	// Cycle pulls at least one value from the pool,
+	// but it will try to clear as many values in the current buffer
+	// as possible.
 	//
-	// This is a blocking operation.
+	// This is a blocking operation until the first value was pulled.
+	// Once the first value is pulled, it will return either instantly,
+	// or after retrying a few times based on the [CycleOptions]
 	Cycle(ctx context.Context, opts CycleOptions) error
 
 	// Stop all loops and close the pool down so no further processing can occur.
@@ -170,6 +174,9 @@ type Message struct {
 	Error error
 }
 
+// [BasePool] implements method [BasePool.p]
+// to allow for pools from multiple packages
+// to still easily support the [GoLoop] function.
 type pPool[POOLTYPE AbstractPool] interface {
 	AbstractPool
 	p() *p[POOLTYPE]
